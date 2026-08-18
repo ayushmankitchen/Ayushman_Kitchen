@@ -1,12 +1,15 @@
 import axios from "axios";
 
 const configuredBackend = process.env.REACT_APP_BACKEND_URL;
-// In production on Vercel, use relative URL so requests go through
-// Vercel's rewrite proxy (same domain = cookies work perfectly).
-// Only use the full backend URL for local development.
-const BACKEND_URL = process.env.NODE_ENV === "production"
-  ? (configuredBackend || "")
+
+// When running in production (e.g. Vercel), use relative path "/api"
+// which is forwarded by vercel.json rewrite to Render backend.
+// This guarantees same-origin cookie delivery and prevents 401 cross-site auth loss.
+const isProd = process.env.NODE_ENV === "production" || (typeof window !== "undefined" && window.location.hostname !== "localhost");
+const BACKEND_URL = isProd
+  ? ""
   : (configuredBackend || "http://localhost:8000");
+
 export const API = `${BACKEND_URL.replace(/\/$/, "")}/api`;
 
 export const adminApi = axios.create({ baseURL: API, withCredentials: true });
