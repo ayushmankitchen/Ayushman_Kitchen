@@ -187,11 +187,14 @@ export default function AdminDashboard() {
         {/* Business Workspace Box */}
         <div className="p-3 mx-3 my-3 bg-white/5 border border-white/10 rounded-2xl">
           <div className="flex items-center gap-2.5 justify-between">
-            {admin.business?.logo_url ? (
-              <div className="h-9 w-9 rounded-xl bg-white/10 p-0.5 overflow-hidden shrink-0 border border-white/20">
-                <img src={admin.business.logo_url} alt="Logo" className="h-full w-full object-cover rounded-lg" />
-              </div>
-            ) : null}
+            <div className="h-9 w-9 rounded-xl bg-white/10 p-0.5 overflow-hidden shrink-0 border border-white/20">
+              <img 
+                src={admin.business?.logo_url || "/workforce-logo.png"} 
+                alt="Logo" 
+                className="h-full w-full object-cover rounded-lg"
+                onError={(e) => { e.currentTarget.src = "/workforce-logo.png"; }}
+              />
+            </div>
             <div className="min-w-0 flex-1">
               <span className="text-[10px] text-teal-300 font-bold uppercase tracking-wider block">Kitchen Mess</span>
               <p className="font-display font-bold text-sm text-white truncate">

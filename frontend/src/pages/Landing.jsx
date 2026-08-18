@@ -193,15 +193,14 @@ export default function Landing() {
           onClick={() => navigate("/")}
           className="flex items-center gap-3.5 group text-left"
         >
-          {biz.logo_url ? (
-            <div className="h-12 w-12 rounded-2xl bg-white border border-stone-300 p-0.5 overflow-hidden shadow-md group-hover:scale-105 transition-transform flex items-center justify-center">
-              <img src={biz.logo_url} alt="Logo" className="h-full w-full object-cover rounded-xl" />
-            </div>
-          ) : (
-            <span className="h-11 w-11 rounded-2xl bg-gradient-to-br from-[#102f2c] to-[#1c4d48] text-amber-300 flex items-center justify-center shadow-lg shadow-teal-950/20 border border-teal-700/30 group-hover:scale-105 transition-transform">
-              <ChefHat className="h-6 w-6" />
-            </span>
-          )}
+          <div className="h-12 w-12 rounded-2xl bg-white border border-stone-300 p-0.5 overflow-hidden shadow-md group-hover:scale-105 transition-transform flex items-center justify-center">
+            <img 
+              src={biz.logo_url || "/workforce-logo.png"} 
+              alt="Logo" 
+              className="h-full w-full object-cover rounded-xl"
+              onError={(e) => { e.currentTarget.src = "/workforce-logo.png"; }}
+            />
+          </div>
           <div>
             <div className="flex items-center gap-2">
               <span className="font-display font-extrabold tracking-tight text-2xl block text-slate-900 leading-none">
