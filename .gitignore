@@ -1,0 +1,30 @@
+# Root gitignore
+node_modules/
+.env
+.env.*
+!.env.example
+!backend/.env.example
+!frontend/.env.example
+__pycache__/
+*.pyc
+venv/
+.venv/
+dist/
+build/
+coverage/
+.DS_Store
+.idea/
+.vscode/
+*.log
+/backend/uploads/
+
+# Frontend build artifacts
+/frontend/build/
+/frontend/dist/
+
+# Backend virtualenv
+/backend/venv/
+/backend/.venv/
+
+# Local envs
+*.local

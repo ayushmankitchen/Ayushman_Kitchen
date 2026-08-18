@@ -1,0 +1,12 @@
+{
+  "short_name": "Ayushman Kitchen",
+  "name": "Ayushman Kitchen - Cloud Kitchen Management",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#102f2c",
+  "theme_color": "#102f2c",
+  "icons": [
+    { "src": "/workforce-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/workforce-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

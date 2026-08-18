@@ -1,0 +1,70 @@
+{
+  "theme": "light",
+  "typography": {
+    "headings": {
+      "font": "Work Sans",
+      "classes": "font-sans font-semibold tracking-tight text-slate-900"
+    },
+    "body": {
+      "font": "IBM Plex Sans",
+      "classes": "font-sans text-slate-600 leading-relaxed"
+    }
+  },
+  "colors": {
+    "archetype": "ARCHETYPE 4: SWISS & HIGH-CONTRAST",
+    "background": "bg-slate-50",
+    "surface": "bg-white",
+    "text_primary": "text-slate-900",
+    "text_secondary": "text-slate-500",
+    "primary": "bg-indigo-600 text-white hover:bg-indigo-700",
+    "worker_primary": "bg-blue-600 text-white hover:bg-blue-700",
+    "border": "border-slate-200",
+    "status": {
+      "present": "bg-emerald-50 text-emerald-700 border-emerald-200",
+      "absent": "bg-rose-50 text-rose-700 border-rose-200",
+      "half_day": "bg-amber-50 text-amber-700 border-amber-200",
+      "paid": "bg-teal-50 text-teal-700 border-teal-200",
+      "pending": "bg-orange-50 text-orange-700 border-orange-200"
+    }
+  },
+  "layouts": {
+    "admin_dashboard": "Sidebar layout. Sidebar fixed left. Main content flex-1 with max-w-7xl mx-auto p-4 md:p-8.",
+    "worker_dashboard": "Top navigation bar layout for mobile-friendly self-service portal. Main content max-w-5xl mx-auto p-4 md:p-8.",
+    "cards": "Subtle Neumorphism. bg-white shadow-sm border border-slate-100 rounded-xl p-6. Internal padding must be generous.",
+    "tables": "Grid Borders. border-collapse, w-full text-left. th with border-b border-slate-200 bg-slate-50 text-slate-500 text-sm font-medium py-3 px-4. td with border-b border-slate-100 py-3 px-4 text-slate-700."
+  },
+  "components": {
+    "buttons": "Pill-shaped or rounded-lg with crisp transitions. transition-all duration-200 active:scale-95.",
+    "inputs": "Shadcn based. rounded-md border-slate-300 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500. Always provide labels.",
+    "badges": "rounded-full px-2.5 py-0.5 text-xs font-medium border"
+  },
+  "motion": {
+    "hover": "Subtle translation (-translate-y-0.5) and shadow increase on cards. Background tint change on table rows.",
+    "transitions": "Specific properties only: transition-colors, transition-transform, transition-shadow duration-200 ease-out."
+  },
+  "icons": {
+    "library": "lucide-react",
+    "instruction": "Use lucide-react for all standard UI icons."
+  },
+  "image_urls": {
+    "worker_avatars": [
+      "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMGF2YXRhcnxlbnwwfHx8fDE3ODU5Mjc4NzN8MA&ixlib=rb-4.1.0&q=85",
+      "https://images.unsplash.com/photo-1494790108377-be9c29b29330?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwyfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMGF2YXRhcnxlbnwwfHx8fDE3ODU5Mjc4NzN8MA&ixlib=rb-4.1.0&q=85",
+      "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwzfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMGF2YXRhcnxlbnwwfHx8fDE3ODU5Mjc4NzN8MA&ixlib=rb-4.1.0&q=85"
+    ]
+  },
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Prioritize using pre-existing components from src/components/ui when applicable.",
+    "Use sonner for toasts.",
+    "Do not apply universal transition (`transition: all`). Add transitions for specific interactive elements like button, input excluding transforms.",
+    "Do not center align the app container, do not add `.App { text-align: center; }`.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Ensure contrast ratio requirements are met (APCA/WCAG AA).",
+    "Never use purely transparent backgrounds under text. Use glass-morphism or solid bg.",
+    "Always set explicit focus states for accessibility.",
+    "All interactive and key informational elements MUST include `data-testid` attribute in kebab-case.",
+    "Use currency symbol ₹ correctly everywhere money is displayed.",
+    "Create robust data grids/tables for attendance tracking and payment records.",
+    "Ensure mobile-friendliness, especially for the worker self-service portal."
+  ]
+}

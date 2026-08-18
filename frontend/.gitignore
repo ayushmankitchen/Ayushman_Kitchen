@@ -1,0 +1,7 @@
+# Frontend ignores
+node_modules/
+build/
+dist/
+.env
+.env.local
+

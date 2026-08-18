@@ -1,0 +1,9 @@
+# Backend ignores
+__pycache__/
+*.pyc
+venv/
+.env
+
+# Local python envs
+.venv/
+
