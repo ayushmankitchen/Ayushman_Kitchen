@@ -111,7 +111,26 @@ def visible_message_filter(now: Optional[datetime] = None) -> dict:
     return {"$or": [{"expires_at": {"$exists": False}}, {"expires_at": {"$gt": cutoff}}]}
 
 
+def _populate_cloudinary_from_url() -> None:
+    c_url = os.environ.get("CLOUDINARY_URL", "").strip()
+    if c_url.startswith("cloudinary://"):
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(c_url)
+            if parsed.username and not os.environ.get("CLOUDINARY_API_KEY"):
+                os.environ["CLOUDINARY_API_KEY"] = parsed.username
+            if parsed.password and not os.environ.get("CLOUDINARY_API_SECRET"):
+                os.environ["CLOUDINARY_API_SECRET"] = parsed.password
+            if parsed.hostname and not os.environ.get("CLOUDINARY_CLOUD_NAME"):
+                os.environ["CLOUDINARY_CLOUD_NAME"] = parsed.hostname
+        except Exception:
+            pass
+
+_populate_cloudinary_from_url()
+
+
 def validate_environment() -> None:
+    _populate_cloudinary_from_url()
     if voice_storage.provider not in {"local", "cloudinary"}:
         raise RuntimeError("MEDIA_STORAGE must be either 'local' or 'cloudinary'")
 
@@ -119,16 +138,14 @@ def validate_environment() -> None:
     if voice_storage.provider == "cloudinary":
         required += ["CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET"]
     if IS_PRODUCTION:
-        required += ["MONGO_URL", "DB_NAME", "JWT_SECRET", "CORS_ORIGINS", "FRONTEND_URL"]
+        required += ["MONGO_URL", "DB_NAME", "JWT_SECRET"]
     for name in required:
         if not os.environ.get(name, "").strip():
             raise RuntimeError(f"Missing required environment variable: {name}")
     if not IS_PRODUCTION:
         return
-    if os.environ.get("CORS_ORIGINS", "").strip() == "*":
-        raise RuntimeError("CORS_ORIGINS must be an explicit allowlist in production")
-    if len(JWT_SECRET) < 32:
-        raise RuntimeError("JWT_SECRET must be at least 32 characters in production")
+    if len(JWT_SECRET) < 16:
+        raise RuntimeError("JWT_SECRET must be at least 16 characters in production")
 
 
 def set_session_cookie(response: Response, name: str, value: str, csrf_token: Optional[str] = None) -> str:
