@@ -1,10 +1,12 @@
 import axios from "axios";
 
 const configuredBackend = process.env.REACT_APP_BACKEND_URL;
-if (process.env.NODE_ENV === "production" && !configuredBackend) {
-  throw new Error("REACT_APP_BACKEND_URL is required for a production build");
-}
-const BACKEND_URL = configuredBackend || "http://localhost:8000";
+// In production on Vercel, use relative URL so requests go through
+// Vercel's rewrite proxy (same domain = cookies work perfectly).
+// Only use the full backend URL for local development.
+const BACKEND_URL = process.env.NODE_ENV === "production"
+  ? (configuredBackend || "")
+  : (configuredBackend || "http://localhost:8000");
 export const API = `${BACKEND_URL.replace(/\/$/, "")}/api`;
 
 export const adminApi = axios.create({ baseURL: API, withCredentials: true });

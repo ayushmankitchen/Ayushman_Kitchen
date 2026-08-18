@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://ayushman-kitchen.onrender.com/api/:path*"
+    }
+  ]
+}
