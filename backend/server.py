@@ -3089,6 +3089,7 @@ async def compute_worker_meal_consumption(biz_id: str, worker: dict):
     today = get_today_date()
 
     # Combined Pool Quota: BOTH -> 60 total; LUNCH_ONLY -> 30 total; DINNER_ONLY -> 30 total
+    # Quota calculation
     total_quota_val = worker.get("total_quota")
     if total_quota_val is not None and int(total_quota_val) > 0:
         total_quota = int(total_quota_val)
@@ -3099,6 +3100,13 @@ async def compute_worker_meal_consumption(biz_id: str, worker: dict):
 
     has_lunch = meal_plan_type in ("BOTH", "LUNCH_ONLY")
     has_dinner = meal_plan_type in ("BOTH", "DINNER_ONLY")
+
+    # Fetch meal window timings
+    menu_doc = await db.meal_settings.find_one({"business_id": biz_id}, {"_id": 0})
+    windows = menu_doc.get("windows", DEFAULT_MEAL_WINDOWS) if menu_doc else DEFAULT_MEAL_WINDOWS
+    lunch_end = windows.get("lunch", {}).get("end_time", "11:00").strip() or "11:00"
+    dinner_end = windows.get("dinner", {}).get("end_time", "19:00").strip() or "19:00"
+    current_time_str = now_tz().strftime("%H:%M")
 
     # Earliest start date for queries
     starts = []
@@ -3159,17 +3167,23 @@ async def compute_worker_meal_consumption(biz_id: str, worker: dict):
 
         if has_lunch and d >= lunch_start_date:
             sel = sel_map.get((d, "lunch"))
-            if sel and (sel.get("selection_type") == "CANCELLED" or sel.get("action") == "CANCEL"):
+            is_cancelled = bool(sel and (sel.get("selection_type") == "CANCELLED" or sel.get("action") == "CANCEL"))
+            if is_cancelled:
                 lunch_skipped += 1
             else:
-                lunch_used += 1
+                # Past dates are eaten; today's meal is counted as eaten only AFTER cutoff window closes
+                if d < today or (d == today and current_time_str >= lunch_end):
+                    lunch_used += 1
 
         if has_dinner and d >= dinner_start_date:
             sel = sel_map.get((d, "dinner"))
-            if sel and (sel.get("selection_type") == "CANCELLED" or sel.get("action") == "CANCEL"):
+            is_cancelled = bool(sel and (sel.get("selection_type") == "CANCELLED" or sel.get("action") == "CANCEL"))
+            if is_cancelled:
                 dinner_skipped += 1
             else:
-                dinner_used += 1
+                # Past dates are eaten; today's meal is counted as eaten only AFTER cutoff window closes
+                if d < today or (d == today and current_time_str >= dinner_end):
+                    dinner_used += 1
 
     total_used = lunch_used + dinner_used
     total_remaining = max(0, total_quota - total_used) if total_quota > 0 else None
@@ -3252,6 +3266,13 @@ async def get_student_meal_calendar(
     worker = await db.workers.find_one({"id": wid, "business_id": biz_id}, {"_id": 0})
     stats = await compute_worker_meal_consumption(biz_id, worker)
 
+    # Fetch meal window timings
+    menu_doc = await db.meal_settings.find_one({"business_id": biz_id}, {"_id": 0})
+    windows = menu_doc.get("windows", DEFAULT_MEAL_WINDOWS) if menu_doc else DEFAULT_MEAL_WINDOWS
+    lunch_end = windows.get("lunch", {}).get("end_time", "11:00").strip() or "11:00"
+    dinner_end = windows.get("dinner", {}).get("end_time", "19:00").strip() or "19:00"
+    current_time_str = now_tz().strftime("%H:%M")
+
     joining_date = (worker or {}).get("joining_date") or get_today_date()
     meal_plan_type = (worker or {}).get("meal_plan_type", "BOTH")
     lunch_start_date = (worker or {}).get("lunch_start_date") or joining_date
@@ -3271,12 +3292,13 @@ async def get_student_meal_calendar(
             lunch_status = "LEAVE"
         else:
             lunch_sel = sel_map.get((d, "lunch"))
-            if not lunch_sel:
-                lunch_status = "DEFAULT"
-            elif lunch_sel.get("selection_type") == "CANCELLED" or lunch_sel.get("action") == "CANCEL":
+            is_cancelled = bool(lunch_sel and (lunch_sel.get("selection_type") == "CANCELLED" or lunch_sel.get("action") == "CANCEL"))
+            if is_cancelled:
                 lunch_status = "CANCELLED"
-            else:
+            elif d < today or (d == today and current_time_str >= lunch_end):
                 lunch_status = "ATE"
+            else:
+                lunch_status = "SCHEDULED"
 
         # Dinner status
         if not has_dinner:
@@ -3287,17 +3309,18 @@ async def get_student_meal_calendar(
             dinner_status = "LEAVE"
         else:
             dinner_sel = sel_map.get((d, "dinner"))
-            if not dinner_sel:
-                dinner_status = "DEFAULT"
-            elif dinner_sel.get("selection_type") == "CANCELLED" or dinner_sel.get("action") == "CANCEL":
+            is_cancelled = bool(dinner_sel and (dinner_sel.get("selection_type") == "CANCELLED" or dinner_sel.get("action") == "CANCEL"))
+            if is_cancelled:
                 dinner_status = "CANCELLED"
-            else:
+            elif d < today or (d == today and current_time_str >= dinner_end):
                 dinner_status = "ATE"
+            else:
+                dinner_status = "SCHEDULED"
 
         # Overall day status
         if d > today:
             day_status = "FUTURE"
-        else:
+        elif d < today:
             active_slots = []
             if has_lunch and lunch_status != "BEFORE_JOIN":
                 active_slots.append(lunch_status)
@@ -3310,7 +3333,7 @@ async def get_student_meal_calendar(
                 day_status = "ON_LEAVE"
             else:
                 eating_slots = [s for s in active_slots if s != "LEAVE"]
-                ate_count = sum(1 for s in eating_slots if s in ("ATE", "DEFAULT"))
+                ate_count = sum(1 for s in eating_slots if s == "ATE")
                 cancelled_count = sum(1 for s in eating_slots if s == "CANCELLED")
 
                 if ate_count == len(eating_slots) and len(eating_slots) > 0:
@@ -3319,6 +3342,26 @@ async def get_student_meal_calendar(
                     day_status = "ABSENT"
                 else:
                     day_status = "PARTIAL"
+        else:
+            # d == today
+            active_slots = []
+            if has_lunch and lunch_status != "BEFORE_JOIN":
+                active_slots.append(lunch_status)
+            if has_dinner and dinner_status != "BEFORE_JOIN":
+                active_slots.append(dinner_status)
+
+            if not active_slots:
+                day_status = "BEFORE_JOIN"
+            elif all(s == "LEAVE" for s in active_slots):
+                day_status = "ON_LEAVE"
+            elif all(s == "CANCELLED" for s in active_slots):
+                day_status = "ABSENT"
+            elif all(s == "ATE" for s in active_slots):
+                day_status = "PRESENT"
+            elif any(s == "SCHEDULED" for s in active_slots):
+                day_status = "TODAY"
+            else:
+                day_status = "PARTIAL"
 
         result.append({
             "date": d,

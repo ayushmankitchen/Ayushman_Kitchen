@@ -1207,6 +1207,9 @@ export default function WorkerDashboard() {
                       Day-by-Day Meal Log for {calMonth}
                     </h3>
                     <div className="flex flex-wrap items-center gap-3 text-[11px] font-bold">
+                      <span className="flex items-center gap-1 text-sky-700">
+                        <span className="h-2 w-2 rounded-full bg-sky-500" /> Today
+                      </span>
                       <span className="flex items-center gap-1 text-emerald-700">
                         <span className="h-2 w-2 rounded-full bg-emerald-500" /> Eaten
                       </span>
@@ -1241,6 +1244,10 @@ export default function WorkerDashboard() {
                           bgClass = "bg-stone-50/50 border-dashed border-stone-200 text-slate-300";
                           statusText = "Pre-Start";
                           badgeColor = "bg-stone-100 text-slate-400";
+                        } else if (d.status === "TODAY") {
+                          bgClass = "bg-sky-50/90 border-sky-300 text-sky-950 ring-2 ring-sky-400/40 shadow-sm";
+                          statusText = "Today";
+                          badgeColor = "bg-sky-200 text-sky-900 font-extrabold";
                         } else if (d.status === "PRESENT") {
                           bgClass = "bg-emerald-50/80 border-emerald-300 text-emerald-950";
                           statusText = "Eaten";
@@ -1279,8 +1286,10 @@ export default function WorkerDashboard() {
                                   <div className="flex items-center justify-between">
                                     <span className="text-slate-500">Lunch:</span>
                                     <span className="font-bold">
-                                      {d.lunch === "ATE" || d.lunch === "DEFAULT"
+                                      {d.lunch === "ATE"
                                         ? "✓ Ate"
+                                        : d.lunch === "SCHEDULED" || d.lunch === "DEFAULT"
+                                        ? "⏳ Scheduled"
                                         : d.lunch === "CANCELLED"
                                         ? "✕ Off"
                                         : d.lunch === "LEAVE"
@@ -1293,8 +1302,10 @@ export default function WorkerDashboard() {
                                   <div className="flex items-center justify-between">
                                     <span className="text-slate-500">Dinner:</span>
                                     <span className="font-bold">
-                                      {d.dinner === "ATE" || d.dinner === "DEFAULT"
+                                      {d.dinner === "ATE"
                                         ? "✓ Ate"
+                                        : d.dinner === "SCHEDULED" || d.dinner === "DEFAULT"
+                                        ? "⏳ Scheduled"
                                         : d.dinner === "CANCELLED"
                                         ? "✕ Off"
                                         : d.dinner === "LEAVE"
