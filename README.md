@@ -179,9 +179,7 @@ Visit **`http://localhost:3000`** in your browser.
 
 <div align="center">
 
-Developed with ❤️ by **Swagat and Nishant**
-
-[![GitHub - Nishant](https://img.shields.io/badge/GitHub-Nishant20361-181717?style=for-the-badge&logo=github)](https://github.com/Nishant20361)
+Developed with  by **Swagat and Nishant**
 
 </div>
 
