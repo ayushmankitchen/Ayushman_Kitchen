@@ -730,6 +730,18 @@ async def admin_signup(body: AdminSignup, response: Response, request: Request):
     }
 
 
+@app.get("/")
+@api_router.get("/health")
+async def root_health():
+    return {
+        "status": "ok",
+        "service": "Ayushman Kitchen API",
+        "version": "1.0.0",
+        "environment": ENVIRONMENT,
+        "timezone": "Asia/Kolkata",
+    }
+
+
 @api_router.get("/public/business")
 async def get_public_business():
     """Returns business branding, logo, notice ticker and showcase boxes for the public home/landing page."""
