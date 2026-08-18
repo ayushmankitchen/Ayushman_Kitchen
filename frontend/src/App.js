@@ -1,6 +1,10 @@
+import { useEffect } from "react";
 import "./App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Toaster } from "sonner";
+import axios from "axios";
+import { API } from "@/lib/api";
+import { applyDynamicBranding } from "@/lib/dynamicBranding";
 import { AdminAuthProvider } from "@/context/AdminAuth";
 import { WorkerAuthProvider } from "@/context/WorkerAuth";
 import Landing from "@/pages/Landing";
@@ -27,6 +31,16 @@ function AppRoutes() {
 }
 
 function App() {
+  useEffect(() => {
+    // Automatically fetch business logo & name and update favicon, iPhone touch icon, and PWA manifest
+    axios
+      .get(`${API}/public/business`)
+      .then((res) => {
+        if (res.data) applyDynamicBranding(res.data);
+      })
+      .catch(() => {});
+  }, []);
+
   return (
     <div className="App">
       <BrowserRouter>

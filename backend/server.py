@@ -777,6 +777,30 @@ async def get_public_business():
     }
 
 
+@app.get("/manifest.json")
+@api_router.get("/public/manifest.json")
+async def get_dynamic_manifest():
+    """Returns dynamic PWA web app manifest with the currently uploaded business logo and name."""
+    biz = await db.businesses.find_one({}, {"_id": 0})
+    name = (biz or {}).get("name") or "Ayushman Kitchen"
+    logo = (biz or {}).get("logo_url") or "/workforce-logo.png"
+
+    icons = [
+        {"src": logo, "sizes": "192x192 512x512", "type": "image/png", "purpose": "any maskable"},
+        {"src": "/workforce-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+        {"src": "/workforce-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+    ]
+    return {
+        "short_name": name,
+        "name": f"{name} - Cloud Kitchen Management",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#102f2c",
+        "theme_color": "#102f2c",
+        "icons": icons
+    }
+
+
 @api_router.post("/admin/login")
 async def admin_login(body: AdminLogin, response: Response, request: Request):
     rate_limit(request, "admin-login", 15, 60)

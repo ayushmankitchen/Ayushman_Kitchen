@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { API } from "@/lib/api";
+import { applyDynamicBranding } from "@/lib/dynamicBranding";
 import {
   ArrowRight,
   UtensilsCrossed,
@@ -134,6 +135,7 @@ export default function Landing() {
       .get(`${API}/public/business`)
       .then((res) => {
         if (res.data) {
+          applyDynamicBranding(res.data);
           setBiz((prev) => ({
             ...prev,
             name: res.data.name || prev.name,

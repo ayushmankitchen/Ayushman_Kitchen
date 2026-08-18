@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { adminApi, apiError, money } from "@/lib/api";
+import { applyDynamicBranding } from "@/lib/dynamicBranding";
 import { useAdminAuth } from "@/context/AdminAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -111,6 +112,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (!loading && !admin) navigate("/admin/login");
     if (admin) {
+      if (admin.business) applyDynamicBranding(admin.business);
       loadWorkers();
       loadUnreadMessages();
       setBizName(admin.business_name || admin.business?.name || "My Business");
@@ -4083,6 +4085,7 @@ function SettingsSection({ admin, setAdmin }) {
         })),
       };
       const res = await adminApi.put("/admin/business", payload);
+      applyDynamicBranding(res.data);
       setAdmin((prev) => ({
         ...prev,
         email: adminEmail.trim(),

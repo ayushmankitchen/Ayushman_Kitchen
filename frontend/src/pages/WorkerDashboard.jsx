@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { workerApi, apiError } from "@/lib/api";
+import { applyDynamicBranding } from "@/lib/dynamicBranding";
 import { useWorkerAuth } from "@/context/WorkerAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -381,6 +382,9 @@ export default function WorkerDashboard() {
     try {
       const res = await workerApi.get("/worker/me/data");
       setData(res.data);
+      if (res.data?.business) {
+        applyDynamicBranding(res.data.business);
+      }
       if (res.data?.worker?.email) {
         setStudentEmail(res.data.worker.email);
       }
