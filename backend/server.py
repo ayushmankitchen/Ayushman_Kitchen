@@ -4150,14 +4150,27 @@ async def production_security(request: Request, call_next):
     return response
 
 _cors_origins = os.environ.get('CORS_ORIGINS', '*')
+_frontend_url = os.environ.get('FRONTEND_URL', '').strip()
+_vercel_origin = "https://ayushman-kitchen.vercel.app"
+
 if _cors_origins.strip() == '*':
-    _allow_origins = ["*"]
+    _allow_origins = [
+        _vercel_origin,
+        "http://localhost:3000",
+        "http://localhost:3001",
+    ]
+    if _frontend_url and _frontend_url not in _allow_origins:
+        _allow_origins.insert(0, _frontend_url)
 else:
     _allow_origins = [o.strip() for o in _cors_origins.split(',') if o.strip()]
+    if _vercel_origin not in _allow_origins:
+        _allow_origins.append(_vercel_origin)
+    if _frontend_url and _frontend_url not in _allow_origins:
+        _allow_origins.insert(0, _frontend_url)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=_allow_origins != ["*"],
+    allow_credentials=True,
     allow_origins=_allow_origins,
     allow_methods=["*"],
     allow_headers=["*"],
