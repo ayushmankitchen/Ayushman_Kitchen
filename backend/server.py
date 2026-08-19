@@ -2402,9 +2402,16 @@ async def deliver_student_broadcast_push(*, business_id: str, meal_slot: str, ti
     on_leave_wids = {lv["worker_id"] for lv in leaves}
 
     # Find active students eligible for meal_slot
-    plan_filter = ["BOTH", f"{meal_slot.upper()}_ONLY"]
     active_students = await db.workers.find(
-        {"business_id": business_id, "status": "ACTIVE", "meal_plan_type": {"$in": plan_filter}},
+        {
+            "business_id": business_id,
+            "status": {"$ne": "INACTIVE"},
+            "$or": [
+                {"meal_plan_type": {"$exists": False}},
+                {"meal_plan_type": None},
+                {"meal_plan_type": {"$in": ["BOTH", "both", f"{meal_slot.upper()}_ONLY", f"{meal_slot.lower()}_only"]}},
+            ]
+        },
         {"id": 1, "_id": 0}
     ).to_list(2000)
 
@@ -4230,6 +4237,7 @@ async def update_meal_settings(body: dict = Body(...), admin: dict = Depends(get
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     await db.meal_settings.update_one({"business_id": biz_id}, {"$set": update_doc}, upsert=True)
+    await db.meal_reminder_logs.delete_many({"business_id": biz_id, "date": get_today_date()})
     return {"ok": True, "meal_settings": update_doc}
 
 
