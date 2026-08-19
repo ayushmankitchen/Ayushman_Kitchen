@@ -26,6 +26,9 @@ import {
   CheckCircle2,
   XCircle,
   X,
+  MapPin,
+  Bike,
+  Utensils,
 } from "lucide-react";
 
 export default function WorkerViewModal({ workerId, open, onClose }) {
@@ -93,6 +96,8 @@ export default function WorkerViewModal({ workerId, open, onClose }) {
 
   if (!open) return null;
 
+  const isDelivery = (data?.worker?.delivery_preference || "").toUpperCase() === "DELIVERY";
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="w-[calc(100%_-_1.5rem)] max-w-3xl max-h-[92vh] overflow-y-auto rounded-3xl p-0 gap-0 border-0 shadow-2xl bg-[#f8f7f2]">
@@ -157,6 +162,15 @@ export default function WorkerViewModal({ workerId, open, onClose }) {
                     : "Both (Lunch + Dinner)"}
                 </strong>
               </span>
+              <span className="bg-white/10 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                {isDelivery ? <Bike className="h-3.5 w-3.5 text-amber-300" /> : <Utensils className="h-3.5 w-3.5 text-amber-300" />}
+                Mode: <strong>{isDelivery ? "🛵 Delivery" : "🍽️ Dine-in"}</strong>
+              </span>
+              {isDelivery && data.worker.delivery_address && (
+                <span className="bg-white/10 px-3 py-1.5 rounded-xl flex items-center gap-1.5 max-w-[280px] truncate" title={data.worker.delivery_address}>
+                  <MapPin className="h-3.5 w-3.5 text-amber-300 shrink-0" /> Room: <strong className="truncate">{data.worker.delivery_address}</strong>
+                </span>
+              )}
               <span className="bg-white/10 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
                 <Phone className="h-3.5 w-3.5 text-amber-300" /> Mobile: <strong className="font-mono">{data.worker.mobile || "—"}</strong>
               </span>

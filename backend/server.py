@@ -461,6 +461,9 @@ class WorkerCreate(BaseModel):
     email: Optional[str] = ""
     status: str = "ACTIVE"
     diet_preference: Optional[str] = "VEG"
+    delivery_preference: Optional[str] = "DINE_IN"  # DINE_IN | DELIVERY
+    delivery_address: Optional[str] = ""            # Hostel / Room / Landmark
+    delivery_notes: Optional[str] = ""              # Delivery instructions
     portal_enabled: bool = True
     login_id: Optional[str] = ""
     password: Optional[str] = ""
@@ -502,6 +505,14 @@ class WorkerCreate(BaseModel):
             return "VEG"
         return val
 
+    @field_validator("delivery_preference")
+    @classmethod
+    def valid_delivery_preference(cls, value: Optional[str]) -> str:
+        val = (value or "DINE_IN").strip().upper()
+        if val not in {"DINE_IN", "DELIVERY"}:
+            return "DINE_IN"
+        return val
+
     @field_validator("email")
     @classmethod
     def valid_email(cls, value: Optional[str]) -> str:
@@ -528,6 +539,9 @@ class WorkerUpdate(BaseModel):
     email: Optional[str] = None
     status: Optional[str] = None
     diet_preference: Optional[str] = None
+    delivery_preference: Optional[str] = None
+    delivery_address: Optional[str] = None
+    delivery_notes: Optional[str] = None
     portal_enabled: Optional[bool] = None
     login_id: Optional[str] = None
     password: Optional[str] = None
@@ -549,6 +563,16 @@ class WorkerUpdate(BaseModel):
             val = value.strip().upper()
             if val not in {"VEG", "NON_VEG"}:
                 return "VEG"
+            return val
+        return value
+
+    @field_validator("delivery_preference")
+    @classmethod
+    def valid_delivery_preference(cls, value: Optional[str]) -> Optional[str]:
+        if value:
+            val = value.strip().upper()
+            if val not in {"DINE_IN", "DELIVERY"}:
+                return "DINE_IN"
             return val
         return value
 
@@ -3822,6 +3846,8 @@ async def get_meal_headcount(
         total_cancelled = 0
         total_on_leave = 0
         total_eating = 0
+        total_dine_in = 0
+        total_delivery = 0
         premium_counts = {}
         student_list = []
 
@@ -3830,6 +3856,9 @@ async def get_meal_headcount(
             plan = s.get("work_type", "Standard")
             meal_plan = s.get("meal_plan_type", "BOTH")
             default_pref = (s.get("diet_preference") or "VEG").upper()
+            default_deliv_pref = (s.get("delivery_preference") or "DINE_IN").upper()
+            default_deliv_addr = s.get("delivery_address") or ""
+            default_deliv_notes = s.get("delivery_notes") or ""
             sel = selections_map.get((sid, slot_key))
             is_on_leave = sid in leave_worker_ids
 
@@ -3842,7 +3871,19 @@ async def get_meal_headcount(
             is_cancelled = False
             effective_choice = ""
             choice_detail = ""
+            effective_delivery = default_deliv_pref if default_deliv_pref in {"DINE_IN", "DELIVERY"} else "DINE_IN"
+            delivery_address = default_deliv_addr
+            delivery_notes = default_deliv_notes
             is_customized = bool(sel)
+
+            if sel and sel.get("delivery_option"):
+                opt = sel.get("delivery_option", "").strip().upper()
+                if opt in {"DINE_IN", "DELIVERY"}:
+                    effective_delivery = opt
+                if sel.get("delivery_address"):
+                    delivery_address = sel.get("delivery_address")
+                if sel.get("delivery_notes"):
+                    delivery_notes = sel.get("delivery_notes")
 
             if not is_plan_included:
                 is_cancelled = True
@@ -3864,6 +3905,11 @@ async def get_meal_headcount(
                 total_cancelled += 1
             else:
                 total_eating += 1
+                if effective_delivery == "DELIVERY":
+                    total_delivery += 1
+                else:
+                    total_dine_in += 1
+
                 if plan.lower() == "premium":
                     if sel and sel.get("selected_item_name"):
                         effective_choice = "PREMIUM"
@@ -3897,6 +3943,9 @@ async def get_meal_headcount(
                 "mobile": s.get("mobile", ""),
                 "plan": plan,
                 "meal_plan_type": meal_plan,
+                "delivery_option": effective_delivery,
+                "delivery_address": delivery_address,
+                "delivery_notes": delivery_notes,
                 "is_cancelled": is_cancelled,
                 "is_on_leave": is_on_leave,
                 "effective_choice": effective_choice,
@@ -3913,6 +3962,8 @@ async def get_meal_headcount(
             "summary": {
                 "total_students": len(students),
                 "total_eating": total_eating,
+                "total_dine_in": total_dine_in,
+                "total_delivery": total_delivery,
                 "cancelled_count": total_cancelled,
                 "on_leave_count": total_on_leave,
                 "standard_veg": total_veg,
@@ -3987,6 +4038,9 @@ async def get_student_today_meal(
     plan = worker.get("work_type", "Standard")
     meal_plan_type = worker.get("meal_plan_type") or "BOTH"
     default_pref = (worker.get("diet_preference") or "VEG").upper()
+    default_delivery_pref = (worker.get("delivery_preference") or "DINE_IN").upper()
+    default_delivery_addr = worker.get("delivery_address") or ""
+    default_delivery_notes = worker.get("delivery_notes") or ""
 
     active_leave = await db.worker_leaves.find_one({
         "business_id": biz_id,
@@ -4013,6 +4067,16 @@ async def get_student_today_meal(
         effective_choice = ""
         selected_item_id = ""
         selected_item_name = ""
+
+        # Determine effective delivery option for this slot
+        if selection and selection.get("delivery_option"):
+            slot_delivery_opt = (selection.get("delivery_option") or "DINE_IN").upper()
+            slot_delivery_addr = selection.get("delivery_address") or default_delivery_addr
+            slot_delivery_notes = selection.get("delivery_notes") or default_delivery_notes
+        else:
+            slot_delivery_opt = default_delivery_pref
+            slot_delivery_addr = default_delivery_addr
+            slot_delivery_notes = default_delivery_notes
 
         if not is_plan_included:
             effective_choice = "NOT_IN_PLAN"
@@ -4064,6 +4128,9 @@ async def get_student_today_meal(
             "window": window_status,
             "menu": slot_menu,
             "selection": selection,
+            "delivery_option": slot_delivery_opt,
+            "delivery_address": slot_delivery_addr,
+            "delivery_notes": slot_delivery_notes,
             "is_cancelled": is_cancelled,
             "effective_choice": effective_choice,
             "selected_item_id": selected_item_id,
@@ -4077,6 +4144,9 @@ async def get_student_today_meal(
         "plan": plan,
         "meal_plan_type": meal_plan_type,
         "default_diet_preference": default_pref,
+        "default_delivery_preference": default_delivery_pref,
+        "delivery_address": default_delivery_addr,
+        "delivery_notes": default_delivery_notes,
         "is_on_leave": bool(active_leave),
         "active_leave": active_leave,
         "lunch": process_student_slot("lunch", lunch_menu),
@@ -4109,6 +4179,13 @@ async def save_student_meal_selection(
     selected_item_name = body.get("selected_item_name")
     notes = (body.get("notes") or "").strip()
 
+    # Delivery fields
+    delivery_option = (body.get("delivery_option") or worker.get("delivery_preference") or "DINE_IN").strip().upper()
+    if delivery_option not in {"DINE_IN", "DELIVERY"}:
+        delivery_option = "DINE_IN"
+    delivery_address = (body.get("delivery_address") if body.get("delivery_address") is not None else worker.get("delivery_address", "")).strip()
+    delivery_notes = (body.get("delivery_notes") if body.get("delivery_notes") is not None else worker.get("delivery_notes", "")).strip()
+
     meal_plan_type = worker.get("meal_plan_type") or "BOTH"
     if meal_plan_type == "LUNCH_ONLY" and slot_key == "dinner":
         raise HTTPException(status_code=400, detail="Your subscription only includes Lunch service.")
@@ -4126,7 +4203,7 @@ async def save_student_meal_selection(
     if active_leave and action != "CANCEL":
         raise HTTPException(status_code=400, detail="You are marked on vacation/home leave for this date. End your leave first to resume meals.")
 
-    # Window check
+    # Window check & cutoff enforcement
     menu_doc = await db.meal_settings.find_one({"business_id": biz_id}, {"_id": 0})
     days = menu_doc.get("days", DEFAULT_WEEKLY_MENU) if menu_doc else DEFAULT_WEEKLY_MENU
     windows = menu_doc.get("windows", DEFAULT_MEAL_WINDOWS) if menu_doc else DEFAULT_MEAL_WINDOWS
@@ -4140,7 +4217,7 @@ async def save_student_meal_selection(
     if not window_check.get("is_open", False):
         raise HTTPException(
             status_code=400,
-            detail=f"The {slot_key.capitalize()} window is currently closed. {window_check.get('message', '')}"
+            detail=f"The {slot_key.capitalize()} cutoff window is closed. Choices cannot be modified after cutoff time. {window_check.get('message', '')}"
         )
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -4155,6 +4232,9 @@ async def save_student_meal_selection(
         "selection_type": selection_type,
         "selected_item_id": selected_item_id,
         "selected_item_name": selected_item_name,
+        "delivery_option": delivery_option,
+        "delivery_address": delivery_address,
+        "delivery_notes": delivery_notes,
         "notes": notes,
         "updated_at": now_iso
     }
@@ -4165,13 +4245,21 @@ async def save_student_meal_selection(
         upsert=True
     )
 
+    # If delivery address is supplied and worker didn't have one saved, update default
+    if delivery_address and not worker.get("delivery_address"):
+        await db.workers.update_one(
+            {"id": wid, "business_id": biz_id},
+            {"$set": {"delivery_address": delivery_address, "updated_at": now_iso}}
+        )
+
     # Log Activity
     sname = worker.get("name", "Student")
+    mode_text = " (🛵 Delivery)" if delivery_option == "DELIVERY" else " (🍽️ Dine-in)"
     if action == "CANCEL":
         act_title = f"❌ {sname} cancelled {slot_key.upper()} ({target_date})"
         act_type = "MEAL_CANCELLED"
     else:
-        act_title = f"🍽️ {sname} chose {selected_item_name or selection_type} for {slot_key.upper()} ({target_date})"
+        act_title = f"🍽️ {sname} chose {selected_item_name or selection_type}{mode_text} for {slot_key.upper()} ({target_date})"
         act_type = "MEAL_CUSTOMIZED"
 
     await db.activity_logs.insert_one({

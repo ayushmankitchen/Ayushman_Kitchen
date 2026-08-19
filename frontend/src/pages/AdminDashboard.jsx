@@ -342,6 +342,8 @@ function OverviewSection({ workers, admin, onNavigate }) {
   const [renewDate, setRenewDate] = useState(todayDateStr);
   const [renewPlan, setRenewPlan] = useState("BOTH");
   const [renewQuota, setRenewQuota] = useState(60);
+  const [rosterFilter, setRosterFilter] = useState("ALL"); // ALL | DINE_IN | DELIVERY | CANCELLED
+  const [rosterSearch, setRosterSearch] = useState("");
 
   const getOffsetDateStr = (daysAgo) => {
     const d = new Date();
@@ -411,6 +413,8 @@ function OverviewSection({ workers, admin, onNavigate }) {
           .badge-eat { color: #047857; font-weight: bold; }
           .badge-cancel { color: #b91c1c; font-weight: bold; }
           .badge-leave { color: #0d9488; font-weight: bold; }
+          .badge-deliv { color: #b45309; font-weight: bold; }
+          .badge-dine { color: #0f766e; font-weight: bold; }
           @media print { body { padding: 0; } button { display: none; } }
         </style>
       </head>
@@ -420,6 +424,8 @@ function OverviewSection({ workers, admin, onNavigate }) {
         
         <div class="summary-box">
           <div class="summary-item">🍽️ Total Eating: ${activeSummary.total_eating || 0}</div>
+          <div class="summary-item">🍽️ Dine-in (Mess): ${activeSummary.total_dine_in || 0}</div>
+          <div class="summary-item">🛵 Delivery (Room): ${activeSummary.total_delivery || 0}</div>
           <div class="summary-item">🥦 Pure Veg: ${activeSummary.standard_veg || 0}</div>
           <div class="summary-item">🍗 Non-Veg: ${activeSummary.standard_non_veg || 0}</div>
           <div class="summary-item">⭐ Premium Dishes: ${activeSummary.premium_total || 0}</div>
@@ -434,6 +440,8 @@ function OverviewSection({ workers, admin, onNavigate }) {
               <th>Student Name</th>
               <th>Mobile / ID</th>
               <th>Subscription</th>
+              <th>Service Mode</th>
+              <th>Delivery Address / Room</th>
               <th>Diet / Dish Choice</th>
               <th>Status</th>
             </tr>
@@ -445,6 +453,12 @@ function OverviewSection({ workers, admin, onNavigate }) {
                 <td><strong>${s.name}</strong></td>
                 <td>${s.mobile || "—"}</td>
                 <td>${s.plan} (${s.meal_plan_type || "BOTH"})</td>
+                <td>
+                  ${s.is_cancelled || s.is_on_leave ? '—' : s.delivery_option === "DELIVERY" ? '<span class="badge-deliv">🛵 Delivery</span>' : '<span class="badge-dine">🍽️ Dine-in</span>'}
+                </td>
+                <td>
+                  ${s.delivery_option === "DELIVERY" && !s.is_cancelled && !s.is_on_leave ? (s.delivery_address || "—") : "—"}
+                </td>
                 <td>${s.choice_detail || s.effective_choice || "Standard"}</td>
                 <td>
                   ${s.is_on_leave ? '<span class="badge-leave">🏖️ On Vacation</span>' : s.is_cancelled ? '<span class="badge-cancel">❌ Cancelled / Off</span>' : '<span class="badge-eat">✓ Eating</span>'}
@@ -466,15 +480,19 @@ function OverviewSection({ workers, admin, onNavigate }) {
   const handleExportCSV = () => {
     const students = activeSlotData.students || [];
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Index,Student Name,Mobile,Subscription Plan,Meal Slot,Diet / Dish Choice,Status,Date\n";
+    csvContent += "Index,Student Name,Mobile,Subscription Plan,Meal Slot,Service Mode,Delivery Address,Diet / Dish Choice,Status,Date\n";
     students.forEach((s, idx) => {
       const statusText = s.is_on_leave ? "On Vacation" : s.is_cancelled ? "Cancelled" : "Eating";
+      const serviceMode = s.is_cancelled || s.is_on_leave ? "N/A" : s.delivery_option === "DELIVERY" ? "Delivery" : "Dine-in";
+      const deliveryAddress = s.delivery_option === "DELIVERY" && !s.is_cancelled && !s.is_on_leave ? (s.delivery_address || "") : "";
       const row = [
         idx + 1,
         `"${(s.name || "").replace(/"/g, '""')}"`,
         `"${(s.mobile || "").replace(/"/g, '""')}"`,
         `"${s.plan} (${s.meal_plan_type || "BOTH"})"`,
         activeSlot.toUpperCase(),
+        `"${serviceMode}"`,
+        `"${deliveryAddress.replace(/"/g, '""')}"`,
         `"${(s.choice_detail || s.effective_choice || "Standard").replace(/"/g, '""')}"`,
         statusText,
         selectedDate,
@@ -827,61 +845,221 @@ function OverviewSection({ workers, admin, onNavigate }) {
         </div>
 
         {/* Detailed Breakdown Boxes for Active Slot */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          {/* Pure Veg */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {/* Total Eating */}
+          <div className="p-4 rounded-2xl bg-teal-50 border border-teal-200 space-y-1">
+            <span className="text-xs font-bold text-teal-900 flex items-center gap-1">
+              🍽️ Total Eating
+            </span>
+            <p className="font-display text-2xl font-extrabold text-teal-950">
+              {activeSummary.total_eating || 0}
+            </p>
+            <p className="text-[10px] text-teal-700">Confirmed meals</p>
+          </div>
+
+          {/* Dine-in Plates */}
           <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 space-y-1">
             <span className="text-xs font-bold text-emerald-900 flex items-center gap-1">
-              🥦 Pure Veg Plates
+              🍽️ Dine-in (Mess)
+            </span>
+            <p className="font-display text-2xl font-extrabold text-emerald-950">
+              {activeSummary.total_dine_in || 0}
+            </p>
+            <p className="text-[10px] text-emerald-700">Eating at Mess</p>
+          </div>
+
+          {/* Delivery Plates */}
+          <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-1">
+            <span className="text-xs font-bold text-amber-900 flex items-center gap-1">
+              🛵 Delivery (Room)
+            </span>
+            <p className="font-display text-2xl font-extrabold text-amber-950">
+              {activeSummary.total_delivery || 0}
+            </p>
+            <p className="text-[10px] text-amber-700">Room / Doorstep</p>
+          </div>
+
+          {/* Pure Veg */}
+          <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 space-y-1">
+            <span className="text-xs font-bold text-emerald-900 flex items-center gap-1">
+              🥦 Pure Veg
             </span>
             <p className="font-display text-2xl font-extrabold text-emerald-950">
               {activeSummary.standard_veg || 0}
             </p>
-            <p className="text-[10px] text-emerald-700">Standard veg meals</p>
+            <p className="text-[10px] text-emerald-700">Veg meals</p>
           </div>
 
           {/* Non-Veg */}
-          <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-1">
+          <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200 space-y-1">
             <span className="text-xs font-bold text-amber-900 flex items-center gap-1">
-              🍗 Non-Veg Plates
+              🍗 Non-Veg
             </span>
             <p className="font-display text-2xl font-extrabold text-amber-950">
               {activeSummary.standard_non_veg || 0}
             </p>
-            <p className="text-[10px] text-amber-700">Standard chicken/egg</p>
+            <p className="text-[10px] text-amber-700">Chicken/egg meals</p>
           </div>
 
-          {/* Premium Gourmet Dishes */}
-          <div className="p-4 rounded-2xl bg-teal-50 border border-teal-200 space-y-1">
-            <span className="text-xs font-bold text-teal-900 flex items-center gap-1">
-              ⭐ Premium Gourmet
-            </span>
-            <p className="font-display text-2xl font-extrabold text-teal-950">
-              {activeSummary.premium_total || 0}
-            </p>
-            <p className="text-[10px] text-teal-700">Custom dishes</p>
-          </div>
-
-          {/* Cancelled */}
+          {/* Cancelled / On Leave */}
           <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 space-y-1">
             <span className="text-xs font-bold text-rose-900 flex items-center gap-1">
-              ❌ Meal Cancelled
+              ❌ Cancelled / Off
             </span>
             <p className="font-display text-2xl font-extrabold text-rose-950">
-              {activeSummary.cancelled_count || 0}
+              {(activeSummary.cancelled_count || 0) + (activeSummary.on_leave_count || 0)}
             </p>
-            <p className="text-[10px] text-rose-700">Skipped this meal</p>
+            <p className="text-[10px] text-rose-700">Not eating today</p>
+          </div>
+        </div>
+
+        {/* Live Kitchen Roster Filter & Student List */}
+        <div className="bg-stone-50 border border-stone-200 rounded-2xl p-4 sm:p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="font-display font-bold text-sm text-slate-900 flex items-center gap-2">
+                <ChefHat className="h-4 w-4 text-teal-800" />
+                <span>Live Student Preparation & Delivery List ({activeSlot.toUpperCase()})</span>
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Check who is eating in mess vs. who requested room delivery
+              </p>
+            </div>
+
+            {/* Filter Tabs */}
+            <div className="flex flex-wrap items-center gap-1.5 bg-white p-1 rounded-xl border border-stone-200 shadow-2xs">
+              {[
+                { key: "ALL", label: `All (${activeSlotData.students?.length || 0})` },
+                { key: "DINE_IN", label: `🍽️ Dine-in (${activeSummary.total_dine_in || 0})` },
+                { key: "DELIVERY", label: `🛵 Delivery (${activeSummary.total_delivery || 0})` },
+                { key: "CANCELLED", label: `❌ Cancelled (${(activeSummary.cancelled_count || 0) + (activeSummary.on_leave_count || 0)})` },
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setRosterFilter(tab.key)}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    rosterFilter === tab.key
+                      ? "bg-teal-800 text-white shadow-xs"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-stone-100"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {/* On Vacation */}
-          <div className="p-4 rounded-2xl bg-cyan-50 border border-cyan-200 space-y-1 col-span-2 sm:col-span-1">
-            <span className="text-xs font-bold text-cyan-900 flex items-center gap-1">
-              🏖️ On Vacation / Leave
-            </span>
-            <p className="font-display text-2xl font-extrabold text-cyan-950">
-              {activeSummary.on_leave_count || 0}
-            </p>
-            <p className="text-[10px] text-cyan-700">Paused meals</p>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+            <Input
+              value={rosterSearch}
+              onChange={(e) => setRosterSearch(e.target.value)}
+              placeholder="Search by student name, room/address, or mobile..."
+              className="pl-9 bg-white rounded-xl text-xs h-8"
+            />
           </div>
+
+          {/* Roster Table */}
+          {(() => {
+            const allStudents = activeSlotData.students || [];
+            const filtered = allStudents.filter((s) => {
+              // Filter tab
+              if (rosterFilter === "DINE_IN") {
+                if (s.is_cancelled || s.is_on_leave || s.delivery_option === "DELIVERY") return false;
+              } else if (rosterFilter === "DELIVERY") {
+                if (s.is_cancelled || s.is_on_leave || s.delivery_option !== "DELIVERY") return false;
+              } else if (rosterFilter === "CANCELLED") {
+                if (!s.is_cancelled && !s.is_on_leave) return false;
+              }
+              // Search
+              if (rosterSearch.trim()) {
+                const q = rosterSearch.toLowerCase();
+                const match = [s.name, s.mobile, s.delivery_address, s.choice_detail, s.plan].some((v) =>
+                  String(v || "").toLowerCase().includes(q)
+                );
+                if (!match) return false;
+              }
+              return true;
+            });
+
+            if (filtered.length === 0) {
+              return (
+                <div className="py-8 text-center text-slate-400 text-xs bg-white rounded-xl border border-stone-200">
+                  No students found in this category for {activeSlot.toUpperCase()}
+                </div>
+              );
+            }
+
+            return (
+              <div className="bg-white border border-stone-200 rounded-xl overflow-x-auto shadow-2xs max-h-[360px] overflow-y-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="sticky top-0 bg-stone-100/90 backdrop-blur-xs border-b border-stone-200 text-slate-600 font-bold uppercase text-[10px]">
+                    <tr>
+                      <th className="py-2.5 px-3">#</th>
+                      <th className="py-2.5 px-3">Student</th>
+                      <th className="py-2.5 px-3">Service Mode</th>
+                      <th className="py-2.5 px-3">Delivery Room / Address</th>
+                      <th className="py-2.5 px-3">Dish / Choice</th>
+                      <th className="py-2.5 px-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((s, idx) => (
+                      <tr key={s.worker_id || idx} className="border-t border-stone-100 hover:bg-stone-50/60">
+                        <td className="py-2 px-3 text-slate-400 text-[11px]">{idx + 1}</td>
+                        <td className="py-2 px-3">
+                          <span className="font-bold text-slate-900 block">{s.name}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">{s.mobile || "—"}</span>
+                        </td>
+                        <td className="py-2 px-3">
+                          {s.is_cancelled || s.is_on_leave ? (
+                            <span className="text-slate-400 text-[11px]">—</span>
+                          ) : s.delivery_option === "DELIVERY" ? (
+                            <span className="inline-flex items-center gap-1 font-bold text-amber-900 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md text-[10px]">
+                              🛵 Delivery
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 font-bold text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-md text-[10px]">
+                              🍽️ Dine-in
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 text-[11px]">
+                          {s.delivery_option === "DELIVERY" && !s.is_cancelled && !s.is_on_leave ? (
+                            <div>
+                              <span className="font-semibold text-slate-800 block">📍 {s.delivery_address || "Address not provided"}</span>
+                              {s.delivery_notes && <span className="text-[10px] text-slate-500">Note: {s.delivery_notes}</span>}
+                            </div>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 font-semibold text-slate-700 text-[11px]">
+                          {s.choice_detail || s.effective_choice || "Standard"}
+                        </td>
+                        <td className="py-2 px-3">
+                          {s.is_on_leave ? (
+                            <span className="inline-flex items-center text-[10px] font-bold text-cyan-800 bg-cyan-50 border border-cyan-200 px-2 py-0.5 rounded-full">
+                              🏖️ Vacation
+                            </span>
+                          ) : s.is_cancelled ? (
+                            <span className="inline-flex items-center text-[10px] font-bold text-rose-800 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
+                              ❌ Cancelled
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                              ✓ Eating
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Export Options: Full Roster & Cancelled-Only Roster */}
@@ -899,7 +1077,7 @@ function OverviewSection({ workers, admin, onNavigate }) {
                 </Badge>
               </div>
               <p className="text-[11px] text-slate-500 mt-1">
-                Complete list with eating, diet preferences, and cancellations for <span className="font-semibold text-slate-700">{selectedDate}</span>.
+                Complete list with eating, diet preferences, delivery rooms, and cancellations for <span className="font-semibold text-slate-700">{selectedDate}</span>.
               </p>
             </div>
             <div className="flex items-center gap-2 pt-1">
@@ -1201,6 +1379,7 @@ const randomWorkerPassword = () => {
 };
 const newWorkerForm = () => ({
   name: "", mobile: "", work_type: "Standard", diet_preference: "VEG",
+  delivery_preference: "DINE_IN", delivery_address: "", delivery_notes: "",
   meal_plan_type: "BOTH", total_quota: 60, lunch_quota: 30, dinner_quota: 30,
   joining_date: todayDateStr(),
   lunch_start_date: todayDateStr(),
@@ -1227,7 +1406,7 @@ function WorkersSection({ workers, reload, onOpenWorkerView }) {
   const photoInputRef = useRef(null);
 
   const visibleWorkers = workers.filter((w) =>
-    [w.name, w.mobile, w.work_type, w.email, w.login_id].some((v) =>
+    [w.name, w.mobile, w.work_type, w.email, w.login_id, w.delivery_address].some((v) =>
       String(v || "").toLowerCase().includes(query.toLowerCase())
     )
   );
@@ -1247,6 +1426,9 @@ function WorkersSection({ workers, reload, onOpenWorkerView }) {
       ...w,
       work_type: w.work_type || "Standard",
       diet_preference: w.diet_preference || "VEG",
+      delivery_preference: w.delivery_preference || "DINE_IN",
+      delivery_address: w.delivery_address || "",
+      delivery_notes: w.delivery_notes || "",
       meal_plan_type: w.meal_plan_type || "BOTH",
       total_quota: w.total_quota !== undefined ? w.total_quota : ((w.lunch_quota || 0) + (w.dinner_quota || 0) || (w.meal_plan_type === "BOTH" ? 60 : 30)),
       lunch_quota: w.lunch_quota !== undefined ? w.lunch_quota : 30,
@@ -1274,11 +1456,11 @@ function WorkersSection({ workers, reload, onOpenWorkerView }) {
     if (!file) return;
     const validTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
     if (!validTypes.includes(file.type.toLowerCase())) {
-      toast.error("Unsupported image format. Please use JPEG, PNG, or WebPJPEG, PNG WebP ");
+      toast.error("Unsupported image format. Please use JPEG, PNG, or WebP");
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      toast.error("Profile photo exceeds the 5 MB limitMB ");
+      toast.error("Profile photo exceeds the 5 MB limit");
       return;
     }
     setSelectedPhotoFile(file);
@@ -1313,6 +1495,9 @@ function WorkersSection({ workers, reload, onOpenWorkerView }) {
         lunch_quota: parseInt(form.lunch_quota ?? 30, 10),
         dinner_quota: parseInt(form.dinner_quota ?? 30, 10),
         meal_plan_type: form.meal_plan_type || "BOTH",
+        delivery_preference: form.delivery_preference || "DINE_IN",
+        delivery_address: (form.delivery_address || "").trim(),
+        delivery_notes: (form.delivery_notes || "").trim(),
         lunch_start_date: form.lunch_start_date || form.joining_date,
         dinner_start_date: form.dinner_start_date || form.joining_date,
       };
@@ -1414,11 +1599,12 @@ function WorkersSection({ workers, reload, onOpenWorkerView }) {
 
       {/* Desktop Table (Hidden on small mobile screens) */}
       <div className="hidden md:block bg-white border border-stone-200 rounded-2xl shadow-sm overflow-x-auto">
-        <table className="w-full text-left min-w-[850px]" data-testid="workers-table">
+        <table className="w-full text-left min-w-[900px]" data-testid="workers-table">
           <thead>
             <tr className="bg-stone-50 text-slate-600 text-xs uppercase tracking-wider font-bold border-b border-stone-200">
               <th className="py-3.5 px-4">Student</th>
               <th className="py-3.5 px-4">Plan</th>
+              <th className="py-3.5 px-4">Service Mode</th>
               <th className="py-3.5 px-4">Mobile</th>
               <th className="py-3.5 px-4">Subscription Status</th>
               <th className="py-3.5 px-4">Portal Access</th>
@@ -1428,12 +1614,13 @@ function WorkersSection({ workers, reload, onOpenWorkerView }) {
           <tbody>
             {visibleWorkers.length === 0 && (
               <tr>
-                <td colSpan={6} className="py-12 text-center text-slate-400 text-sm">
+                <td colSpan={7} className="py-12 text-center text-slate-400 text-sm">
                   {workers.length ? "No students match your search." : "No students added yet. Click 'Add Student'."}
                 </td>
               </tr>
             )}
             {visibleWorkers.map((w) => {
+              const isDelivery = (w.delivery_preference || "").toUpperCase() === "DELIVERY";
               return (
                 <tr
                   key={w.id}
@@ -1460,6 +1647,24 @@ function WorkersSection({ workers, reload, onOpenWorkerView }) {
                     <Badge variant="secondary" className={`rounded-lg text-xs font-semibold ${w.work_type === "Premium" ? "bg-amber-50 text-amber-800 border border-amber-200" : "bg-sky-50 text-sky-800 border border-sky-200"}`}>
                       {w.work_type || "Standard"}
                     </Badge>
+                  </td>
+                  <td className="py-3 px-4">
+                    {isDelivery ? (
+                      <div className="space-y-0.5">
+                        <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-900 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg">
+                          🛵 Delivery
+                        </span>
+                        {w.delivery_address && (
+                          <p className="text-[11px] text-slate-500 truncate max-w-[180px]" title={w.delivery_address}>
+                            📍 {w.delivery_address}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs font-bold text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-lg">
+                        🍽️ Dine-in
+                      </span>
+                    )}
                   </td>
                   <td className="py-3 px-4 font-mono text-sm text-slate-600">{w.mobile || "—"}</td>
                   <td className="py-3 px-4">
@@ -1522,94 +1727,105 @@ function WorkersSection({ workers, reload, onOpenWorkerView }) {
             {workers.length ? "No students match your search." : "No students added yet. Click 'Add Student'."}
           </div>
         )}
-        {visibleWorkers.map((w) => (
-          <div
-            key={w.id}
-            data-testid={`worker-card-${w.id}`}
-            className="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm space-y-3"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <WorkerAvatar
-                  name={w.name}
-                  photoUrl={w.profile_photo_url}
-                  size="lg"
-                  className="shadow-sm border border-stone-200 shrink-0"
-                />
-                <div className="min-w-0">
-                  <h3 className="font-display font-bold text-base text-slate-900 leading-tight truncate">
-                    {w.name}
-                  </h3>
-                  <div className="flex items-center gap-2 mt-1">
-                    <Badge variant="secondary" className={`text-[11px] font-semibold ${w.work_type === "Premium" ? "bg-amber-50 text-amber-800 border border-amber-200" : "bg-sky-50 text-sky-800 border border-sky-200"}`}>
-                      {w.work_type || "Standard"}
-                    </Badge>
-                    <Badge className={w.status === "INACTIVE" ? "bg-slate-100 text-slate-600 text-[10px]" : "bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px]"}>
-                      {w.status === "INACTIVE" ? "Inactive" : "Active"}
-                    </Badge>
+        {visibleWorkers.map((w) => {
+          const isDelivery = (w.delivery_preference || "").toUpperCase() === "DELIVERY";
+          return (
+            <div
+              key={w.id}
+              data-testid={`worker-card-${w.id}`}
+              className="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm space-y-3"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <WorkerAvatar
+                    name={w.name}
+                    photoUrl={w.profile_photo_url}
+                    size="lg"
+                    className="shadow-sm border border-stone-200 shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <h3 className="font-display font-bold text-base text-slate-900 leading-tight truncate">
+                      {w.name}
+                    </h3>
+                    <div className="flex items-center gap-2 mt-1">
+                      <Badge variant="secondary" className={`text-[11px] font-semibold ${w.work_type === "Premium" ? "bg-amber-50 text-amber-800 border border-amber-200" : "bg-sky-50 text-sky-800 border border-sky-200"}`}>
+                        {w.work_type || "Standard"}
+                      </Badge>
+                      <Badge className={w.status === "INACTIVE" ? "bg-slate-100 text-slate-600 text-[10px]" : "bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px]"}>
+                        {w.status === "INACTIVE" ? "Inactive" : "Active"}
+                      </Badge>
+                    </div>
                   </div>
                 </div>
-              </div>
-              {w.login_id && (
-                <span className="font-mono text-xs font-bold text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-md shrink-0">
-                  {w.login_id}
-                </span>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 text-xs bg-stone-50 rounded-xl p-2.5 border border-stone-100">
-              <div>
-                <span className="text-slate-400 block text-[10px]">Mobile</span>
-                <span className="font-mono font-semibold text-slate-800">{w.mobile || "—"}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[10px]">Subscription Status</span>
-                <Badge className={w.status === "INACTIVE" ? "bg-slate-100 text-slate-600 text-[10px]" : "bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px]"}>
-                  {w.status === "INACTIVE" ? "Inactive" : "Active"}
-                </Badge>
-              </div>
-              <div className="col-span-2 flex items-center justify-between pt-1 border-t border-stone-200/60">
-                <span className="text-slate-400 text-[10px]">Portal Access:</span>
-                {w.portal_enabled ? (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
-                    <CheckCircle2 className="h-3 w-3" /> Login Enabled
+                {w.login_id && (
+                  <span className="font-mono text-xs font-bold text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-md shrink-0">
+                    {w.login_id}
                   </span>
-                ) : (
-                  <span className="text-[11px] text-slate-400">No Login</span>
                 )}
               </div>
-            </div>
 
-            <div className="flex items-center justify-between gap-2 pt-1 border-t border-stone-100">
-              <button
-                data-testid={`view-worker-card-account-${w.id}`}
-                onClick={() => onOpenWorkerView(w.id)}
-                className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold py-2 px-3 rounded-xl bg-teal-800 text-white hover:bg-teal-900 transition-colors shadow-sm"
-              >
-                <Eye className="h-3.5 w-3.5" /> </button>
-              <Button
-                data-testid={`edit-worker-card-${w.id}`}
-                variant="outline"
-                size="sm"
-                onClick={() => openEdit(w)}
-                className="rounded-xl border-stone-200 hover:bg-stone-50 h-9 w-9 p-0"
-                aria-label="Edit worker"
-              >
-                <Pencil className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                data-testid={`delete-worker-card-${w.id}`}
-                variant="outline"
-                size="sm"
-                onClick={() => setDelTarget(w)}
-                className="rounded-xl border-rose-200 text-rose-600 hover:bg-rose-50 h-9 w-9 p-0"
-                aria-label="Delete worker"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
+              <div className="grid grid-cols-2 gap-2 text-xs bg-stone-50 rounded-xl p-2.5 border border-stone-100">
+                <div>
+                  <span className="text-slate-400 block text-[10px]">Service Mode</span>
+                  {isDelivery ? (
+                    <span className="font-bold text-amber-900 inline-flex items-center gap-1">🛵 Delivery</span>
+                  ) : (
+                    <span className="font-bold text-teal-800 inline-flex items-center gap-1">🍽️ Dine-in</span>
+                  )}
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px]">Mobile</span>
+                  <span className="font-mono font-semibold text-slate-800">{w.mobile || "—"}</span>
+                </div>
+                {isDelivery && w.delivery_address && (
+                  <div className="col-span-2 text-[11px] text-slate-600 bg-amber-50/70 p-2 rounded-lg border border-amber-200/60">
+                    <span className="text-amber-900 font-bold block text-[10px]">Delivery Room/Address:</span>
+                    {w.delivery_address}
+                  </div>
+                )}
+                <div className="col-span-2 flex items-center justify-between pt-1 border-t border-stone-200/60">
+                  <span className="text-slate-400 text-[10px]">Portal Access:</span>
+                  {w.portal_enabled ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                      <CheckCircle2 className="h-3 w-3" /> Login Enabled
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-slate-400">No Login</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 pt-1 border-t border-stone-100">
+                <button
+                  data-testid={`view-worker-card-account-${w.id}`}
+                  onClick={() => onOpenWorkerView(w.id)}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold py-2 px-3 rounded-xl bg-teal-800 text-white hover:bg-teal-900 transition-colors shadow-sm"
+                >
+                  <Eye className="h-3.5 w-3.5" /> </button>
+                <Button
+                  data-testid={`edit-worker-card-${w.id}`}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openEdit(w)}
+                  className="rounded-xl border-stone-200 hover:bg-stone-50 h-9 w-9 p-0"
+                  aria-label="Edit worker"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  data-testid={`delete-worker-card-${w.id}`}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDelTarget(w)}
+                  className="rounded-xl border-rose-200 text-rose-600 hover:bg-rose-50 h-9 w-9 p-0"
+                  aria-label="Delete worker"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Add / Edit Worker Modal */}
@@ -1648,53 +1864,54 @@ function WorkersSection({ workers, reload, onOpenWorkerView }) {
                 </div>
 
                 <div className="flex flex-col gap-2 min-w-0 flex-1">
-                  <input
-                    ref={photoInputRef}
-                    type="file"
-                    id="worker-photo-upload-input"
-                    data-testid="worker-photo-file-input"
-                    accept="image/jpeg,image/png,image/webp,image/jpg"
-                    onChange={handlePhotoSelect}
-                    className="hidden"
-                  />
                   <div className="flex flex-wrap items-center gap-2">
-                    <label
-                      htmlFor="worker-photo-upload-input"
-                      className="inline-flex items-center gap-1.5 text-xs font-bold py-2 px-3.5 rounded-xl bg-teal-800 text-white hover:bg-teal-900 transition-colors cursor-pointer shadow-sm active:scale-95"
+                    <input
+                      ref={photoInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/jpg"
+                      onChange={handlePhotoSelect}
+                      className="hidden"
+                      id="worker-photo-upload"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => photoInputRef.current?.click()}
+                      className="rounded-xl border-stone-300 hover:bg-stone-100 font-bold text-xs"
                     >
-                      <Camera className="h-3.5 w-3.5" />
-                      <span>{photoPreviewUrl && !photoRemoved ? "Change Photo" : "Upload Photo"}</span>
-                    </label>
-
-                    {(photoPreviewUrl || selectedPhotoFile) && !photoRemoved && (
+                      <Upload className="h-3.5 w-3.5 mr-1.5" />
+                      {photoPreviewUrl && !photoRemoved ? "Change Photo" : "Upload Photo"}
+                    </Button>
+                    {(photoPreviewUrl || (!photoRemoved && form.profile_photo_url)) && (
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="ghost"
                         size="sm"
                         onClick={handleRemovePhoto}
-                        data-testid="worker-photo-remove-btn"
-                        className="rounded-xl border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-bold"
+                        className="rounded-xl text-rose-600 hover:bg-rose-50 hover:text-rose-700 font-bold text-xs"
                       >
-                        <Trash2 className="h-3.5 w-3.5 mr-1" /> Remove</Button>
+                        <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Remove
+                      </Button>
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-400">
-                    Initials) </p>
+                  <p className="text-[10px] text-slate-400">
+                    Photos help mess staff identify students at meal service counters.
+                  </p>
                 </div>
               </div>
             </section>
 
+            {/* Profile Information Section */}
             <section className="space-y-4">
-              <h3 className="text-xs font-extrabold uppercase tracking-wider text-teal-800">Student Details</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="min-w-0">
-                  <Label className="text-xs font-semibold text-slate-700">Full Name</Label>
+                  <Label className="text-xs font-semibold text-slate-700">Full Name *</Label>
                   <Input
                     data-testid="worker-name-input"
-                    autoFocus
-                    placeholder="e.g. Ramesh Kumar"
                     value={form.name}
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    placeholder="e.g. Ramesh Kumar"
                     className="mt-1 w-full min-w-0 rounded-xl"
                   />
                 </div>
@@ -1702,46 +1919,41 @@ function WorkersSection({ workers, reload, onOpenWorkerView }) {
                   <Label className="text-xs font-semibold text-slate-700">Mobile Number</Label>
                   <Input
                     data-testid="worker-mobile-input"
-                    type="tel"
-                    placeholder="10-digit mobile"
                     value={form.mobile}
                     onChange={(e) => setForm({ ...form, mobile: e.target.value })}
+                    placeholder="10-digit mobile"
                     className="mt-1 w-full min-w-0 rounded-xl"
                   />
                 </div>
               </div>
 
-              <div>
-                <Label className="text-xs font-semibold text-slate-700">Subscription Plan</Label>
-                <div data-testid="worker-type-select" className="grid grid-cols-2 gap-2 mt-1.5">
-                  {workTypes.map((type) => (
+              <div className="min-w-0">
+                <Label className="text-xs font-semibold text-slate-700">Student Plan / Category</Label>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  {["Standard", "Premium"].map((t) => (
                     <button
-                      key={type}
+                      key={t}
                       type="button"
-                      data-testid={`worker-type-${type.toLowerCase().replace(/\s/g, "-")}`}
-                      onClick={() => setForm({ ...form, work_type: type })}
-                      className={`min-h-10 px-3 py-2 rounded-xl border text-xs font-bold transition-all ${
-                        form.work_type === type
-                          ? type === "Premium" ? "bg-amber-600 border-amber-600 text-white shadow-sm" : "bg-teal-800 border-teal-800 text-white shadow-sm"
+                      onClick={() => setForm({ ...form, work_type: t })}
+                      className={`min-h-10 px-3 py-2 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                        form.work_type === t
+                          ? t === "Premium"
+                            ? "bg-amber-600 border-amber-600 text-white shadow-sm"
+                            : "bg-teal-800 border-teal-800 text-white shadow-sm"
                           : "bg-white border-stone-200 text-slate-700 hover:bg-stone-50"
                       }`}
                     >
-                      {type === "Premium" ? "⭐ Premium" : "Standard"}
+                      {t === "Premium" && <Sparkles className="h-3.5 w-3.5 text-amber-200" />}
+                      {t} Plan
                     </button>
                   ))}
                 </div>
               </div>
 
-              {form.work_type === "Standard" && (
+              {/* Diet Preference */}
+              {form.work_type !== "Premium" && (
                 <div className="p-3.5 bg-stone-50 border border-stone-200 rounded-2xl space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-bold text-slate-800">
-                      Default Food Preference (Standard Plan)
-                    </Label>
-                    <span className="text-[10px] text-slate-500 font-semibold">
-                      For Veg & Non-Veg days
-                    </span>
-                  </div>
+                  <Label className="text-xs font-bold text-slate-800">Diet Preference</Label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
@@ -1763,12 +1975,9 @@ function WorkersSection({ workers, reload, onOpenWorkerView }) {
                           : "bg-white border-stone-200 text-slate-700 hover:bg-stone-50"
                       }`}
                     >
-                      🍗 Non-Veg (Default)
+                      🍗 Non-Veg
                     </button>
                   </div>
-                  <p className="text-[11px] text-slate-500">
-                    On days when Non-Veg is prepared, this student receives Non-Veg by default. The student can switch anytime for specific days in their app.
-                  </p>
                 </div>
               )}
               {form.work_type === "Premium" && (
@@ -1781,6 +1990,66 @@ function WorkersSection({ workers, reload, onOpenWorkerView }) {
                   </p>
                 </div>
               )}
+
+              {/* Default Meal Service Mode: Dine-in vs. Delivery */}
+              <div className="p-4 bg-stone-50 border border-stone-200 rounded-2xl space-y-3">
+                <div>
+                  <Label className="text-xs font-bold text-slate-800">Default Meal Service Mode</Label>
+                  <p className="text-[11px] text-slate-500">Choose whether the student eats at the Mess (Dine-In) or gets meals delivered to room/hostel.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, delivery_preference: "DINE_IN" })}
+                    className={`min-h-10 px-3 py-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      (form.delivery_preference || "DINE_IN") === "DINE_IN"
+                        ? "bg-teal-800 border-teal-800 text-white shadow-sm"
+                        : "bg-white border-stone-200 text-slate-700 hover:bg-stone-50"
+                    }`}
+                  >
+                    🍽️ Dine-In (Mess)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, delivery_preference: "DELIVERY" })}
+                    className={`min-h-10 px-3 py-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      form.delivery_preference === "DELIVERY"
+                        ? "bg-amber-600 border-amber-600 text-white shadow-sm"
+                        : "bg-white border-stone-200 text-slate-700 hover:bg-stone-50"
+                    }`}
+                  >
+                    🛵 Delivery (Room / Doorstep)
+                  </button>
+                </div>
+
+                {form.delivery_preference === "DELIVERY" && (
+                  <div className="pt-2 space-y-3 border-t border-stone-200">
+                    <div>
+                      <Label className="text-xs font-semibold text-slate-700">Delivery Address / Hostel & Room No *</Label>
+                      <Input
+                        type="text"
+                        placeholder="e.g. Boys Hostel 2, Room 304, 3rd Floor"
+                        value={form.delivery_address || ""}
+                        onChange={(e) => setForm({ ...form, delivery_address: e.target.value })}
+                        className="mt-1 w-full rounded-xl bg-white text-xs font-medium"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs font-semibold text-slate-700">Delivery Notes / Instructions (Optional)</Label>
+                      <Input
+                        type="text"
+                        placeholder="e.g. Leave at guard desk / Call before coming"
+                        value={form.delivery_notes || ""}
+                        onChange={(e) => setForm({ ...form, delivery_notes: e.target.value })}
+                        className="mt-1 w-full rounded-xl bg-white text-xs"
+                      />
+                    </div>
+                  </div>
+                )}
+                <p className="text-[10px] text-slate-500">
+                  Note: Students can also switch between Dine-In and Delivery daily in their Student Portal before the cutoff time.
+                </p>
+              </div>
 
               {/* Meal Service & Quota Controls */}
               <div className="p-4 bg-stone-50 border border-stone-200 rounded-2xl space-y-3">

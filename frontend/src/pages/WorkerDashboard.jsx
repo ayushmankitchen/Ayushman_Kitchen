@@ -5,7 +5,9 @@ import { applyDynamicBranding } from "@/lib/dynamicBranding";
 import { useWorkerAuth } from "@/context/WorkerAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import WorkerAvatar from "@/components/ui/WorkerAvatar";
 import MessageBubble from "@/components/chat/MessageBubble";
@@ -47,6 +49,9 @@ import {
   Building2,
   Image as ImageIcon,
   Mail,
+  MapPin,
+  Bike,
+  Utensils,
 } from "lucide-react";
 
 const DEFAULT_SHOWCASE_BOXES = [
@@ -83,7 +88,23 @@ const DEFAULT_SHOWCASE_BOXES = [
 /* ─────────────────────────────────────────────────────────────
    MealSlotCard – renders one meal slot (lunch OR dinner)
 ───────────────────────────────────────────────────────────── */
-function MealSlotCard({ slotKey, title, icon, iconBg, slotData, plan, defaultPref, saving, onAction, onEndLeave }) {
+function MealSlotCard({
+  slotKey,
+  title,
+  icon,
+  iconBg,
+  slotData,
+  plan,
+  defaultPref,
+  defaultPrefDelivery,
+  defaultAddress,
+  defaultNotes,
+  saving,
+  onAction,
+  onServiceModeChange,
+  onEditAddress,
+  onEndLeave,
+}) {
   if (!slotData) {
     return (
       <div className="bg-white border border-stone-200 rounded-3xl p-6 flex items-center justify-center text-slate-400 text-sm">
@@ -104,6 +125,10 @@ function MealSlotCard({ slotKey, title, icon, iconBg, slotData, plan, defaultPre
   const windowLabel   = windowStart && windowEnd
     ? `${windowStart} – ${windowEnd}`
     : slotKey === "lunch" ? "8:00 – 11:00 AM" : "4:00 – 7:00 PM";
+
+  const effectiveDeliveryOption = (slotData.delivery_option || defaultPrefDelivery || "DINE_IN").toUpperCase();
+  const effectiveAddress = slotData.delivery_address || defaultAddress || "";
+  const effectiveNotes = slotData.delivery_notes || defaultNotes || "";
 
   /* window status badge */
   let windowBadge;
@@ -210,10 +235,80 @@ function MealSlotCard({ slotKey, title, icon, iconBg, slotData, plan, defaultPre
                   type="button"
                   disabled={saving}
                   onClick={() => onAction(slotKey, "CONFIRM", defaultPref === "NON_VEG" ? "NON_VEG" : "VEG")}
-                  className="w-full rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white"
+                  className="w-full rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
                 >
                   🔄 Opt Back In – Eat {title}
                 </Button>
+              )}
+            </div>
+          )}
+
+          {/* Service Mode Preference: Dine-in vs Delivery */}
+          {!isCancelled && (
+            <div className="rounded-2xl border border-stone-200 bg-stone-50/80 p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                  <Utensils className="h-3.5 w-3.5 text-teal-800" /> Meal Service Mode
+                </span>
+                {!windowOpen && (
+                  <span className="text-[10px] font-bold text-slate-500 bg-slate-200/80 px-2 py-0.5 rounded-md flex items-center gap-1">
+                    <Lock className="h-3 w-3" /> Cutoff Locked
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={!windowOpen || saving}
+                  onClick={() => onServiceModeChange(slotKey, "DINE_IN")}
+                  className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                    effectiveDeliveryOption === "DINE_IN"
+                      ? "bg-teal-800 border-teal-800 text-white shadow-xs"
+                      : "bg-white border-stone-200 text-slate-700 hover:bg-stone-100"
+                  } ${!windowOpen ? "opacity-60 cursor-not-allowed" : ""}`}
+                >
+                  🍽️ Dine-in (Mess)
+                </button>
+                <button
+                  type="button"
+                  disabled={!windowOpen || saving}
+                  onClick={() => onServiceModeChange(slotKey, "DELIVERY")}
+                  className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                    effectiveDeliveryOption === "DELIVERY"
+                      ? "bg-amber-600 border-amber-600 text-white shadow-xs"
+                      : "bg-white border-stone-200 text-slate-700 hover:bg-stone-100"
+                  } ${!windowOpen ? "opacity-60 cursor-not-allowed" : ""}`}
+                >
+                  🛵 Delivery (Room)
+                </button>
+              </div>
+
+              {effectiveDeliveryOption === "DELIVERY" && (
+                <div className="pt-2 border-t border-stone-200 space-y-1.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[10px] font-bold text-amber-900 flex items-center gap-1">
+                        <MapPin className="h-3 w-3" /> Delivery Room / Address:
+                      </span>
+                      <p className="text-xs font-semibold text-slate-800 truncate" title={effectiveAddress || "No address set"}>
+                        {effectiveAddress || "⚠️ No address set — click Edit Room"}
+                      </p>
+                      {effectiveNotes && (
+                        <p className="text-[10px] text-slate-500 mt-0.5">Note: {effectiveNotes}</p>
+                      )}
+                    </div>
+                    {windowOpen && (
+                      <button
+                        type="button"
+                        onClick={() => onEditAddress(slotKey, effectiveAddress, effectiveNotes)}
+                        className="text-[10px] font-bold text-amber-900 hover:text-amber-950 bg-amber-100 hover:bg-amber-200 px-2 py-1 rounded-lg shrink-0 transition-colors"
+                      >
+                        ✏️ Edit Room
+                      </button>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
           )}
@@ -302,11 +397,11 @@ function MealSlotCard({ slotKey, title, icon, iconBg, slotData, plan, defaultPre
             </button>
           )}
 
-          {/* Window closed notice when no selection made */}
-          {!windowOpen && !isCancelled && !isConfirmed && (
-            <div className="rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-slate-400 shrink-0" />
-              <p className="text-[11px] text-slate-500">Selection window is closed. Default meal will be served.</p>
+          {/* Window closed notice when cutoff has passed */}
+          {!windowOpen && !isCancelled && (
+            <div className="rounded-xl bg-stone-100 border border-stone-200 px-3 py-2 flex items-center gap-2">
+              <Lock className="h-4 w-4 text-slate-400 shrink-0" />
+              <p className="text-[11px] text-slate-500">Cutoff time passed for {title}. Service mode & meal choice are locked.</p>
             </div>
           )}
         </>
@@ -349,6 +444,13 @@ export default function WorkerDashboard() {
   const [todayMeal, setTodayMeal] = useState(null);
   const [todayMealLoading, setTodayMealLoading] = useState(true);
   const [savingSelection, setSavingSelection] = useState(false);
+
+  // Room / Delivery Address Edit Dialog State
+  const [addressDialogOpen, setAddressDialogOpen] = useState(false);
+  const [addressDialogSlot, setAddressDialogSlot] = useState("lunch"); // "lunch" or "dinner"
+  const [addressDialogValue, setAddressDialogValue] = useState("");
+  const [addressDialogNotes, setAddressDialogNotes] = useState("");
+  const [addressDialogSaving, setAddressDialogSaving] = useState(false);
 
   // Meal Quotas / Stats State
   const [mealStats, setMealStats] = useState(null);
@@ -452,6 +554,11 @@ export default function WorkerDashboard() {
   const handleMealAction = async (slotKey, action, selectionType = "VEG", itemId = null, itemName = null) => {
     setSavingSelection(true);
     try {
+      const slotData = todayMeal?.[slotKey] || {};
+      const currentDeliveryOption = slotData.delivery_option || todayMeal?.default_delivery_preference || data?.worker?.delivery_preference || "DINE_IN";
+      const currentDeliveryAddress = slotData.delivery_address || todayMeal?.default_delivery_address || data?.worker?.delivery_address || "";
+      const currentDeliveryNotes = slotData.delivery_notes || todayMeal?.default_delivery_notes || data?.worker?.delivery_notes || "";
+
       const payload = {
         date: todayMeal?.date,
         meal_slot: slotKey,
@@ -459,6 +566,9 @@ export default function WorkerDashboard() {
         selection_type: action === "CANCEL" ? "CANCELLED" : selectionType,
         selected_item_id: itemId,
         selected_item_name: itemName,
+        delivery_option: currentDeliveryOption,
+        delivery_address: currentDeliveryAddress,
+        delivery_notes: currentDeliveryNotes,
       };
       await workerApi.post("/worker/select-meal", payload);
       if (action === "CANCEL") {
@@ -472,6 +582,84 @@ export default function WorkerDashboard() {
             : `⭐ "${itemName}" confirmed for ${slotKey.toUpperCase()}!`
         );
       }
+      await Promise.all([loadTodayMeal(), loadMealStats()]);
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setSavingSelection(false);
+    }
+  };
+
+  const handleOpenEditAddress = (slotKey, currentAddr, currentNotes) => {
+    setAddressDialogSlot(slotKey);
+    setAddressDialogValue(currentAddr || data?.worker?.delivery_address || "");
+    setAddressDialogNotes(currentNotes || data?.worker?.delivery_notes || "");
+    setAddressDialogOpen(true);
+  };
+
+  const handleSaveDeliveryAddress = async () => {
+    if (!addressDialogValue.trim()) {
+      toast.error("Please enter your hostel name & room number");
+      return;
+    }
+    setAddressDialogSaving(true);
+    try {
+      const slotData = todayMeal?.[addressDialogSlot] || {};
+      const payload = {
+        date: todayMeal?.date,
+        meal_slot: addressDialogSlot,
+        action: slotData.is_cancelled ? "CANCEL" : "CONFIRM",
+        selection_type: slotData.is_cancelled ? "CANCELLED" : (slotData.effective_choice || "VEG"),
+        selected_item_id: slotData.selected_item_id || null,
+        selected_item_name: slotData.selected_item_name || null,
+        delivery_option: "DELIVERY",
+        delivery_address: addressDialogValue.trim(),
+        delivery_notes: addressDialogNotes.trim(),
+      };
+      await workerApi.post("/worker/select-meal", payload);
+      toast.success(`Delivery address saved for ${addressDialogSlot.toUpperCase()}! 🛵`);
+      setAddressDialogOpen(false);
+      await Promise.all([loadTodayMeal(), loadMealStats(), loadData()]);
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setAddressDialogSaving(false);
+    }
+  };
+
+  const handleServiceModeChange = async (slotKey, newMode) => {
+    const slotData = todayMeal?.[slotKey] || {};
+    const currentAddr = slotData.delivery_address || data?.worker?.delivery_address || "";
+    const currentNotes = slotData.delivery_notes || data?.worker?.delivery_notes || "";
+
+    // If switching to delivery and no address exists, open modal to input address
+    if (newMode === "DELIVERY" && !currentAddr.trim()) {
+      setAddressDialogSlot(slotKey);
+      setAddressDialogValue("");
+      setAddressDialogNotes(currentNotes);
+      setAddressDialogOpen(true);
+      return;
+    }
+
+    setSavingSelection(true);
+    try {
+      const payload = {
+        date: todayMeal?.date,
+        meal_slot: slotKey,
+        action: slotData.is_cancelled ? "CANCEL" : "CONFIRM",
+        selection_type: slotData.is_cancelled ? "CANCELLED" : (slotData.effective_choice || "VEG"),
+        selected_item_id: slotData.selected_item_id || null,
+        selected_item_name: slotData.selected_item_name || null,
+        delivery_option: newMode,
+        delivery_address: currentAddr,
+        delivery_notes: currentNotes,
+      };
+      await workerApi.post("/worker/select-meal", payload);
+      toast.success(
+        newMode === "DELIVERY"
+          ? `🛵 ${slotKey.toUpperCase()} set to Room Delivery!`
+          : `🍽️ ${slotKey.toUpperCase()} set to Mess Dine-in!`
+      );
       await Promise.all([loadTodayMeal(), loadMealStats()]);
     } catch (e) {
       toast.error(apiError(e));
@@ -989,8 +1177,13 @@ export default function WorkerDashboard() {
                         slotData={todayMeal.lunch}
                         plan={data.worker.work_type}
                         defaultPref={todayMeal.default_diet_preference}
+                        defaultPrefDelivery={todayMeal.default_delivery_preference || data?.worker?.delivery_preference}
+                        defaultAddress={todayMeal.default_delivery_address || data?.worker?.delivery_address}
+                        defaultNotes={todayMeal.default_delivery_notes || data?.worker?.delivery_notes}
                         saving={savingSelection}
                         onAction={handleMealAction}
+                        onServiceModeChange={handleServiceModeChange}
+                        onEditAddress={handleOpenEditAddress}
                         onEndLeave={handleEndLeave}
                       />
 
@@ -1003,8 +1196,13 @@ export default function WorkerDashboard() {
                         slotData={todayMeal.dinner}
                         plan={data.worker.work_type}
                         defaultPref={todayMeal.default_diet_preference}
+                        defaultPrefDelivery={todayMeal.default_delivery_preference || data?.worker?.delivery_preference}
+                        defaultAddress={todayMeal.default_delivery_address || data?.worker?.delivery_address}
+                        defaultNotes={todayMeal.default_delivery_notes || data?.worker?.delivery_notes}
                         saving={savingSelection}
                         onAction={handleMealAction}
+                        onServiceModeChange={handleServiceModeChange}
+                        onEditAddress={handleOpenEditAddress}
                         onEndLeave={handleEndLeave}
                       />
                     </div>
@@ -1530,6 +1728,69 @@ export default function WorkerDashboard() {
           </>
         )}
       </main>
+
+      {/* 🛵 Delivery Room / Address Dialog */}
+      <Dialog open={addressDialogOpen} onOpenChange={setAddressDialogOpen}>
+        <DialogContent className="w-[calc(100%_-_2rem)] max-w-md rounded-3xl p-6 gap-4">
+          <DialogHeader className="p-0 space-y-1.5 text-left">
+            <div className="h-11 w-11 rounded-2xl bg-amber-100 text-amber-900 flex items-center justify-center font-bold">
+              <Bike className="h-6 w-6" />
+            </div>
+            <DialogTitle className="font-display text-lg font-bold text-slate-900">
+              Delivery Room & Instructions
+            </DialogTitle>
+            <p className="text-xs text-slate-500">
+              Please enter your hostel name, floor, and room number for {addressDialogSlot.toUpperCase()} delivery.
+            </p>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-1">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-slate-700">Hostel & Room Number *</Label>
+              <Input
+                placeholder="e.g. Boys Hostel 2, Room 304, 3rd Floor"
+                value={addressDialogValue}
+                onChange={(e) => setAddressDialogValue(e.target.value)}
+                className="rounded-xl h-10 text-xs font-medium"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-slate-700">Delivery Instructions (Optional)</Label>
+              <Input
+                placeholder="e.g. Leave at door / Call on arrival"
+                value={addressDialogNotes}
+                onChange={(e) => setAddressDialogNotes(e.target.value)}
+                className="rounded-xl h-10 text-xs"
+              />
+            </div>
+
+            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-900">
+              💡 <strong>Tip:</strong> Kitchen staff will deliver your meal box right outside your room at standard delivery hours.
+            </div>
+          </div>
+
+          <DialogFooter className="p-0 flex flex-row gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setAddressDialogOpen(false)}
+              className="flex-1 rounded-xl text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={addressDialogSaving || !addressDialogValue.trim()}
+              onClick={handleSaveDeliveryAddress}
+              className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs shadow-xs"
+            >
+              {addressDialogSaving ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : null}
+              Confirm Delivery
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 🏖️ Vacation / Going Home Modal */}
       {leaveModalOpen && (
