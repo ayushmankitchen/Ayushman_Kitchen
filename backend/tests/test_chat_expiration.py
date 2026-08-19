@@ -115,8 +115,8 @@ async def test_unread_and_read_messages_keep_creation_based_48_hour_expiry(monke
 async def test_expired_message_does_not_appear_in_message_api(monkeypatch):
     now = datetime.now(timezone.utc)
     messages = FakeCollection([
-        {"id": "expired", "conversation_id": "c1", "business_id": "b1", "worker_id": "w1", "created_at": "1", "expires_at": now - timedelta(seconds=1), "message_type": "text"},
-        {"id": "visible", "conversation_id": "c1", "business_id": "b1", "worker_id": "w1", "created_at": "2", "message_type": "text"},
+        {"id": "expired", "conversation_id": "c1", "business_id": "b1", "worker_id": "w1", "created_at": (now - timedelta(days=3)).isoformat(), "expires_at": now - timedelta(seconds=1), "message_type": "text"},
+        {"id": "visible", "conversation_id": "c1", "business_id": "b1", "worker_id": "w1", "created_at": now.isoformat(), "message_type": "text"},
     ])
     monkeypatch.setattr(server, "db", SimpleNamespace(messages=messages))
 

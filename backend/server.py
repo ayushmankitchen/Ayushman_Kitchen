@@ -75,6 +75,8 @@ COOKIE_SECURE = IS_PRODUCTION or os.environ.get("COOKIE_SECURE", "false").lower(
 COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "none" if IS_PRODUCTION else "lax").lower()
 SESSION_MAX_AGE = int(os.environ.get("SESSION_MAX_AGE_SECONDS", "5184000"))
 MESSAGE_RETENTION = timedelta(hours=48)
+NOTIFICATION_RETENTION = timedelta(days=3)
+RENEWAL_ACTIVITY_TYPES = {"SUBSCRIPTION_RENEWED", "RENEWAL", "RENEW", "SUBSCRIPTION_RENEW"}
 voice_storage = VoiceStorage()
 photo_storage = ProfilePhotoStorage()
 
@@ -108,7 +110,13 @@ def message_expiry_from_created_at(created_at: Any) -> Optional[datetime]:
 
 def visible_message_filter(now: Optional[datetime] = None) -> dict:
     cutoff = now or datetime.now(timezone.utc)
-    return {"$or": [{"expires_at": {"$exists": False}}, {"expires_at": {"$gt": cutoff}}]}
+    cutoff_iso = (cutoff - MESSAGE_RETENTION).isoformat()
+    return {
+        "$and": [
+            {"$or": [{"expires_at": {"$exists": False}}, {"expires_at": {"$gt": cutoff}}]},
+            {"created_at": {"$gt": cutoff_iso}}
+        ]
+    }
 
 
 def _populate_cloudinary_from_url() -> None:
@@ -2505,31 +2513,68 @@ async def migrate_message_expirations() -> int:
 
 
 async def cleanup_expired_voice_assets() -> int:
-    """Delete expired private voice binaries and their scoped metadata."""
+    """Delete expired private voice binaries, audio metadata, and chat messages older than 2 days."""
     removed = 0
+    now = datetime.now(timezone.utc)
+    cutoff_iso = (now - MESSAGE_RETENTION).isoformat()
+
+    # 1. Delete voice binary files from storage
     cursor = db.voice_assets.find(
-        {"expires_at": {"$lte": datetime.now(timezone.utc)}},
+        {"$or": [
+            {"expires_at": {"$lte": now}},
+            {"created_at": {"$lte": cutoff_iso}}
+        ]},
         {"_id": 0},
     )
     async for asset in cursor:
         try:
             await voice_storage.delete_voice_message(asset)
-            result = await db.voice_assets.delete_one({
-                "id": asset.get("id"),
-                "business_id": asset.get("business_id"),
-                "conversation_id": asset.get("conversation_id"),
-                "expires_at": asset.get("expires_at"),
-            })
-            removed += result.deleted_count
+            removed += 1
         except Exception:
             logger.exception("Expired voice asset cleanup failed id=%s", asset.get("id"))
+
+    # 2. Delete voice metadata from database
+    await db.voice_assets.delete_many({
+        "$or": [
+            {"expires_at": {"$lte": now}},
+            {"created_at": {"$lte": cutoff_iso}}
+        ]
+    })
+
+    # 3. Automatically delete all chat messages older than 2 days (48 hours)
+    deleted_msgs = await db.messages.delete_many({
+        "$or": [
+            {"expires_at": {"$lte": now}},
+            {"created_at": {"$lte": cutoff_iso}}
+        ]
+    })
+    if deleted_msgs.deleted_count > 0:
+        logger.info("Auto-cleanup: Deleted %d chat messages older than 2 days.", deleted_msgs.deleted_count)
+
     return removed
+
+
+async def cleanup_expired_notifications() -> int:
+    """Delete regular activity notifications older than 3 days, keeping renewal notifications safe."""
+    cutoff_3days = (datetime.now(timezone.utc) - NOTIFICATION_RETENTION).isoformat()
+    try:
+        result = await db.activity_logs.delete_many({
+            "created_at": {"$lte": cutoff_3days},
+            "type": {"$nin": list(RENEWAL_ACTIVITY_TYPES)},
+        })
+        if result.deleted_count > 0:
+            logger.info("Auto-cleanup: Removed %d regular activity notifications older than 3 days.", result.deleted_count)
+        return result.deleted_count
+    except Exception:
+        logger.exception("Notification auto-cleanup failed")
+        return 0
 
 
 async def voice_expiration_loop() -> None:
     while True:
         await asyncio.sleep(30)
         await cleanup_expired_voice_assets()
+        await cleanup_expired_notifications()
 
 
 async def cleanup_old_meal_data() -> int:
@@ -3097,7 +3142,15 @@ async def cancel_student_leave(leave_id: Optional[str] = None, user: dict = Depe
 @api_router.get("/admin/activity-feed")
 async def get_admin_activity_feed(admin: dict = Depends(get_current_admin)):
     biz_id = admin["business_id"]
-    logs = await db.activity_logs.find({"business_id": biz_id}, {"_id": 0}).sort("created_at", -1).to_list(30)
+    cutoff_3days = (datetime.now(timezone.utc) - NOTIFICATION_RETENTION).isoformat()
+    q = {
+        "business_id": biz_id,
+        "$or": [
+            {"type": {"$in": list(RENEWAL_ACTIVITY_TYPES)}},
+            {"created_at": {"$gt": cutoff_3days}},
+        ]
+    }
+    logs = await db.activity_logs.find(q, {"_id": 0}).sort("created_at", -1).to_list(50)
     return logs
 
 
