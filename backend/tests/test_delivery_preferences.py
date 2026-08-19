@@ -1,5 +1,5 @@
 import pytest
-from backend.server import WorkerCreate, WorkerUpdate, check_meal_slot_window
+from backend.server import WorkerCreate, WorkerUpdate, check_meal_slot_window, compute_student_meal_calendar
 
 def test_worker_create_delivery_fields():
     # Default is DINE_IN

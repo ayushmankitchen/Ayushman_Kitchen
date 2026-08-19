@@ -3265,15 +3265,8 @@ async def get_student_meal_stats(user: dict = Depends(get_current_worker)):
     return stats
 
 
-@api_router.get("/worker/meal-calendar")
-async def get_student_meal_calendar(
-    month: Optional[str] = Query(default=None),
-    user: dict = Depends(get_current_worker)
-):
-    """Returns per-day meal attendance for a given month (YYYY-MM)."""
-    biz_id = user["business_id"]
-    wid = user["worker_id"]
-
+async def compute_student_meal_calendar(biz_id: str, wid: str, month: Optional[str] = None) -> dict:
+    """Computes per-day meal attendance for a student for a given month (YYYY-MM)."""
     if not month:
         month = now_tz().strftime("%Y-%m")
 
@@ -3312,6 +3305,9 @@ async def get_student_meal_calendar(
 
     today = get_today_date()
     worker = await db.workers.find_one({"id": wid, "business_id": biz_id}, {"_id": 0})
+    if not worker:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+
     stats = await compute_worker_meal_consumption(biz_id, worker)
 
     # Fetch meal window timings
@@ -3321,17 +3317,21 @@ async def get_student_meal_calendar(
     dinner_end = windows.get("dinner", {}).get("end_time", "19:00").strip() or "19:00"
     current_time_str = now_tz().strftime("%H:%M")
 
-    joining_date = (worker or {}).get("joining_date") or get_today_date()
-    meal_plan_type = (worker or {}).get("meal_plan_type", "BOTH")
-    lunch_start_date = (worker or {}).get("lunch_start_date") or joining_date
-    dinner_start_date = (worker or {}).get("dinner_start_date") or joining_date
+    joining_date = worker.get("joining_date") or get_today_date()
+    meal_plan_type = worker.get("meal_plan_type", "BOTH")
+    lunch_start_date = worker.get("lunch_start_date") or joining_date
+    dinner_start_date = worker.get("dinner_start_date") or joining_date
 
     has_lunch = meal_plan_type in ("BOTH", "LUNCH_ONLY")
     has_dinner = meal_plan_type in ("BOTH", "DINNER_ONLY")
 
     result = []
     for d in dates:
-        # Lunch status
+        # Lunch status & details
+        lunch_sel = sel_map.get((d, "lunch"))
+        lunch_choice = lunch_sel.get("choice_detail") or lunch_sel.get("selection_type") if lunch_sel else None
+        lunch_delivery = lunch_sel.get("delivery_option") if lunch_sel else worker.get("delivery_preference", "DINE_IN")
+
         if not has_lunch:
             lunch_status = "N_A"
         elif d < lunch_start_date:
@@ -3339,7 +3339,6 @@ async def get_student_meal_calendar(
         elif d in leave_dates:
             lunch_status = "LEAVE"
         else:
-            lunch_sel = sel_map.get((d, "lunch"))
             is_cancelled = bool(lunch_sel and (lunch_sel.get("selection_type") == "CANCELLED" or lunch_sel.get("action") == "CANCEL"))
             if is_cancelled:
                 lunch_status = "CANCELLED"
@@ -3348,7 +3347,11 @@ async def get_student_meal_calendar(
             else:
                 lunch_status = "SCHEDULED"
 
-        # Dinner status
+        # Dinner status & details
+        dinner_sel = sel_map.get((d, "dinner"))
+        dinner_choice = dinner_sel.get("choice_detail") or dinner_sel.get("selection_type") if dinner_sel else None
+        dinner_delivery = dinner_sel.get("delivery_option") if dinner_sel else worker.get("delivery_preference", "DINE_IN")
+
         if not has_dinner:
             dinner_status = "N_A"
         elif d < dinner_start_date:
@@ -3356,7 +3359,6 @@ async def get_student_meal_calendar(
         elif d in leave_dates:
             dinner_status = "LEAVE"
         else:
-            dinner_sel = sel_map.get((d, "dinner"))
             is_cancelled = bool(dinner_sel and (dinner_sel.get("selection_type") == "CANCELLED" or dinner_sel.get("action") == "CANCEL"))
             if is_cancelled:
                 dinner_status = "CANCELLED"
@@ -3416,6 +3418,10 @@ async def get_student_meal_calendar(
             "status": day_status,
             "lunch": lunch_status,
             "dinner": dinner_status,
+            "lunch_choice": lunch_choice,
+            "dinner_choice": dinner_choice,
+            "lunch_delivery": lunch_delivery,
+            "dinner_delivery": dinner_delivery,
         })
 
     summary = {
@@ -3433,7 +3439,26 @@ async def get_student_meal_calendar(
         "on_leave": len([d for d in result if d["status"] == "ON_LEAVE"]),
     }
 
-    return {"month": month, "joining_date": joining_date, "days": result, "summary": summary}
+    return {"month": month, "joining_date": joining_date, "days": result, "summary": summary, "worker": worker}
+
+
+@api_router.get("/worker/meal-calendar")
+async def get_student_meal_calendar(
+    month: Optional[str] = Query(default=None),
+    user: dict = Depends(get_current_worker)
+):
+    """Returns per-day meal attendance for the logged-in student for a given month (YYYY-MM)."""
+    return await compute_student_meal_calendar(user["business_id"], user["worker_id"], month)
+
+
+@api_router.get("/admin/workers/{worker_id}/meal-calendar")
+async def get_admin_student_meal_calendar(
+    worker_id: str,
+    month: Optional[str] = Query(default=None),
+    admin: dict = Depends(get_current_admin)
+):
+    """Admin endpoint: returns per-day meal attendance calendar for a student."""
+    return await compute_student_meal_calendar(admin["business_id"], worker_id, month)
 
 
 @api_router.get("/admin/workers/{worker_id}/meal-stats")

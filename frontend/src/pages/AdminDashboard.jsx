@@ -2524,14 +2524,14 @@ function AttendanceSection({ workers }) {
                   date === todayDateStr() ? "bg-teal-800 text-white" : "bg-stone-100 text-slate-700 hover:bg-stone-200"
                 }`}
               >
-                Today)
+                Today
               </button>
               <button
                 type="button"
                 onClick={() => setQuickDate("yesterday")}
                 className="px-3 py-1.5 rounded-xl text-xs font-bold bg-stone-100 text-slate-700 hover:bg-stone-200 transition-colors"
               >
-                Yesterday)
+                Yesterday
               </button>
               <Input
                 data-testid="attendance-date-input"

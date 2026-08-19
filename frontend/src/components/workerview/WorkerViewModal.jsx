@@ -5,39 +5,344 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import WorkerAvatar from "@/components/ui/WorkerAvatar";
-import AttendanceCalendar from "@/components/attendance/AttendanceCalendar";
-import SalarySlipModal from "@/components/salary/SalarySlipModal";
-import { adminApi, apiError, money } from "@/lib/api";
+import { adminApi, apiError } from "@/lib/api";
 import {
   CalendarCheck,
-  Wallet,
+  ChevronLeft,
+  ChevronRight,
   Sparkles,
   ArrowLeft,
   Loader2,
   Phone,
   Calendar,
   Briefcase,
-  ShieldCheck,
-  FileText,
   Sun,
   Moon,
   ChefHat,
   Palmtree,
   CheckCircle2,
   XCircle,
-  X,
   MapPin,
   Bike,
   Utensils,
+  Calendar as CalendarIcon,
 } from "lucide-react";
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
+
+const WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function StudentMealCalendarView({ workerId, worker }) {
+  const today = new Date();
+  const [calMonth, setCalMonth] = useState(() => {
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const [calData, setCalData] = useState(null);
+  const [calLoading, setCalLoading] = useState(true);
+
+  const [yearNum, monthNum] = calMonth.split("-").map(Number);
+
+  const fetchMealCalendar = useCallback(async (mStr) => {
+    if (!workerId) return;
+    setCalLoading(true);
+    try {
+      const res = await adminApi.get(`/admin/workers/${workerId}/meal-calendar`, {
+        params: { month: mStr },
+      });
+      setCalData(res.data);
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setCalLoading(false);
+    }
+  }, [workerId]);
+
+  useEffect(() => {
+    fetchMealCalendar(calMonth);
+  }, [calMonth, fetchMealCalendar]);
+
+  const handlePrevMonth = () => {
+    if (monthNum === 1) {
+      setCalMonth(`${yearNum - 1}-12`);
+    } else {
+      setCalMonth(`${yearNum}-${String(monthNum - 1).padStart(2, "0")}`);
+    }
+  };
+
+  const handleNextMonth = () => {
+    if (monthNum === 12) {
+      setCalMonth(`${yearNum + 1}-01`);
+    } else {
+      setCalMonth(`${yearNum}-${String(monthNum + 1).padStart(2, "0")}`);
+    }
+  };
+
+  const handleCurrentMonth = () => {
+    const d = new Date();
+    setCalMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  };
+
+  // Calculate leading blank days: Mon=0 ... Sun=6
+  const firstDayOfMonth = new Date(yearNum, monthNum - 1, 1);
+  const leadingBlanksCount = (firstDayOfMonth.getDay() + 6) % 7;
+  const leadingBlanks = Array.from({ length: leadingBlanksCount });
+
+  const summary = calData?.summary;
+
+  return (
+    <div className="space-y-5">
+      {/* Month Navigation Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-stone-200 shadow-xs">
+        <div className="flex items-center gap-2.5">
+          <div className="h-9 w-9 rounded-xl bg-teal-50 text-teal-800 flex items-center justify-center">
+            <CalendarCheck className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="font-display font-extrabold text-lg text-slate-900 leading-tight">
+              {MONTH_NAMES[monthNum - 1]} {yearNum}
+            </h3>
+            <p className="text-[11px] text-slate-500 font-medium">Monthly Meal Attendance & Quota Log</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5 self-start sm:self-auto">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handlePrevMonth}
+            className="rounded-xl h-8 px-2.5 text-xs font-bold border-stone-200"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleCurrentMonth}
+            className="rounded-xl h-8 px-3 text-xs font-bold border-stone-200 text-teal-800 hover:bg-teal-50"
+          >
+            Today
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleNextMonth}
+            className="rounded-xl h-8 px-2.5 text-xs font-bold border-stone-200"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Top Metrics Cards */}
+      {summary && (
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          {/* 1. Start Date */}
+          <div className="p-3.5 rounded-2xl bg-white border border-stone-200 shadow-xs space-y-0.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">📅 Start Date</span>
+            <p className="font-display text-base font-extrabold text-slate-900 truncate">
+              {summary.lunch_start_date || summary.joining_date}
+            </p>
+            <p className="text-[10px] text-slate-400">Meal active since</p>
+          </div>
+
+          {/* 2. Meals Eaten */}
+          <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 shadow-xs space-y-0.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 block">🟢 Meals Eaten</span>
+            <p className="font-display text-xl font-extrabold text-emerald-950">
+              {summary.total_used ?? summary.present}
+            </p>
+            <p className="text-[10px] text-emerald-700">Plates served</p>
+          </div>
+
+          {/* 3. Remaining Meals */}
+          <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 shadow-xs space-y-0.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900 block">🍱 Remaining Balance</span>
+            <p className="font-display text-xl font-extrabold text-amber-950">
+              {summary.total_remaining !== null ? summary.total_remaining : "∞"}
+              <span className="text-[11px] font-normal text-slate-500 ml-1">
+                / {summary.total_quota || (summary.meal_plan_type === "BOTH" ? 60 : 30)}
+              </span>
+            </p>
+            <p className="text-[10px] text-amber-800">Remaining quota</p>
+          </div>
+
+          {/* 4. Skipped / Cancelled */}
+          <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 shadow-xs space-y-0.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-rose-900 block">🔴 Skipped / Cancelled</span>
+            <p className="font-display text-xl font-extrabold text-rose-950">
+              {summary.total_skipped ?? summary.absent}
+            </p>
+            <p className="text-[10px] text-rose-700">Skipped meals</p>
+          </div>
+
+          {/* 5. Vacation */}
+          <div className="p-3.5 rounded-2xl bg-teal-50 border border-teal-200 shadow-xs space-y-0.5 col-span-2 sm:col-span-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-teal-900 block">🏖️ Vacation / Leave</span>
+            <p className="font-display text-xl font-extrabold text-teal-950">
+              {summary.on_leave || 0}
+            </p>
+            <p className="text-[10px] text-teal-700">Days paused</p>
+          </div>
+        </div>
+      )}
+
+      {/* Calendar Grid Box */}
+      <div className="bg-white border border-stone-200 rounded-3xl p-5 shadow-sm space-y-4">
+        <div className="flex flex-wrap items-center justify-between border-b border-stone-100 pb-3 gap-2">
+          <h4 className="font-display font-bold text-sm text-slate-900 flex items-center gap-1.5">
+            <ChefHat className="h-4 w-4 text-teal-800" />
+            <span>Daily Lunch & Dinner Meal History</span>
+          </h4>
+
+          <div className="flex flex-wrap items-center gap-2.5 text-[10px] font-bold">
+            <span className="flex items-center gap-1 text-sky-700">
+              <span className="h-2 w-2 rounded-full bg-sky-500" /> Today
+            </span>
+            <span className="flex items-center gap-1 text-emerald-700">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" /> Eaten
+            </span>
+            <span className="flex items-center gap-1 text-amber-700">
+              <span className="h-2 w-2 rounded-full bg-amber-500" /> 1 Meal
+            </span>
+            <span className="flex items-center gap-1 text-rose-700">
+              <span className="h-2 w-2 rounded-full bg-rose-500" /> Skipped
+            </span>
+            <span className="flex items-center gap-1 text-teal-700">
+              <span className="h-2 w-2 rounded-full bg-teal-500" /> Vacation
+            </span>
+          </div>
+        </div>
+
+        {calLoading ? (
+          <div className="py-16 text-center text-slate-400 flex items-center justify-center gap-2">
+            <Loader2 className="h-5 w-5 animate-spin text-teal-800" />
+            <span className="text-xs font-semibold">Loading student meal calendar records...</span>
+          </div>
+        ) : !calData?.days?.length ? (
+          <div className="py-12 text-center text-slate-400 text-xs">No records found for this month</div>
+        ) : (
+          <div>
+            {/* Weekday Headers */}
+            <div className="grid grid-cols-7 gap-2 mb-2 text-center">
+              {WEEKDAY_NAMES.map((wk) => (
+                <div key={wk} className="text-[11px] font-extrabold uppercase text-slate-500 tracking-wider">
+                  {wk}
+                </div>
+              ))}
+            </div>
+
+            {/* Day Tiles */}
+            <div className="grid grid-cols-7 gap-2">
+              {/* Leading blanks */}
+              {leadingBlanks.map((_, i) => (
+                <div key={`blank-${i}`} className="min-h-[85px] rounded-2xl bg-stone-50/40 border border-transparent" />
+              ))}
+
+              {calData.days.map((d) => {
+                const dayNum = d.date.split("-")[2];
+                let bgClass = "bg-stone-50 border-stone-200 text-slate-400";
+                let statusText = "Future";
+                let badgeColor = "bg-stone-100 text-slate-500";
+
+                if (d.status === "BEFORE_JOIN") {
+                  bgClass = "bg-stone-50/50 border-dashed border-stone-200 text-slate-300";
+                  statusText = "Pre-Start";
+                  badgeColor = "bg-stone-100 text-slate-400";
+                } else if (d.status === "TODAY") {
+                  bgClass = "bg-sky-50 border-sky-300 text-sky-950 ring-2 ring-sky-400/40 shadow-xs";
+                  statusText = "Today";
+                  badgeColor = "bg-sky-200 text-sky-900 font-extrabold";
+                } else if (d.status === "PRESENT") {
+                  bgClass = "bg-emerald-50/90 border-emerald-300 text-emerald-950";
+                  statusText = "Eaten";
+                  badgeColor = "bg-emerald-200 text-emerald-900";
+                } else if (d.status === "PARTIAL") {
+                  bgClass = "bg-amber-50/90 border-amber-300 text-amber-950";
+                  statusText = "1 Meal";
+                  badgeColor = "bg-amber-200 text-amber-900";
+                } else if (d.status === "ABSENT") {
+                  bgClass = "bg-rose-50/90 border-rose-300 text-rose-950";
+                  statusText = "Skipped";
+                  badgeColor = "bg-rose-200 text-rose-900";
+                } else if (d.status === "ON_LEAVE") {
+                  bgClass = "bg-teal-50/90 border-teal-300 text-teal-950";
+                  statusText = "Vacation";
+                  badgeColor = "bg-teal-200 text-teal-900";
+                }
+
+                return (
+                  <div
+                    key={d.date}
+                    className={`p-2.5 rounded-2xl border transition-all flex flex-col justify-between min-h-[85px] ${bgClass}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-display font-extrabold text-sm sm:text-base">
+                        {parseInt(dayNum, 10)}
+                      </span>
+                      <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md ${badgeColor}`}>
+                        {statusText}
+                      </span>
+                    </div>
+
+                    {d.status !== "FUTURE" && d.status !== "BEFORE_JOIN" && (
+                      <div className="text-[10px] space-y-0.5 pt-1 border-t border-black/5 mt-1">
+                        {d.lunch && d.lunch !== "N_A" && (
+                          <div className="flex items-center justify-between leading-none py-0.5">
+                            <span className="text-slate-500 font-medium">☀️ L:</span>
+                            <span className="font-bold truncate max-w-[55px] text-[9px]">
+                              {d.lunch === "ATE"
+                                ? "✓ Ate"
+                                : d.lunch === "SCHEDULED"
+                                ? "⏳ Sched"
+                                : d.lunch === "CANCELLED"
+                                ? "✕ Off"
+                                : d.lunch === "LEAVE"
+                                ? "🏖️"
+                                : "—"}
+                            </span>
+                          </div>
+                        )}
+                        {d.dinner && d.dinner !== "N_A" && (
+                          <div className="flex items-center justify-between leading-none py-0.5">
+                            <span className="text-slate-500 font-medium">🌙 D:</span>
+                            <span className="font-bold truncate max-w-[55px] text-[9px]">
+                              {d.dinner === "ATE"
+                                ? "✓ Ate"
+                                : d.dinner === "SCHEDULED"
+                                ? "⏳ Sched"
+                                : d.dinner === "CANCELLED"
+                                ? "✕ Off"
+                                : d.dinner === "LEAVE"
+                                ? "🏖️"
+                                : "—"}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function WorkerViewModal({ workerId, open, onClose }) {
   const [data, setData] = useState(null);
   const [mealStats, setMealStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [modalTab, setModalTab] = useState("meals"); // "meals", "calendar", "finance"
-  const [salarySlipOpen, setSalarySlipOpen] = useState(false);
+  const [modalTab, setModalTab] = useState("meals"); // "meals" or "calendar"
 
   // Renewal State
   const [renewOpen, setRenewOpen] = useState(false);
@@ -180,7 +485,7 @@ export default function WorkerViewModal({ workerId, open, onClose }) {
             </div>
           )}
 
-          {/* Sub-tab navigation */}
+          {/* Sub-tab navigation: 2 Clean Tabs */}
           <div className="flex items-center gap-2 mt-5 border-t border-white/10 pt-4">
             <button
               type="button"
@@ -205,18 +510,6 @@ export default function WorkerViewModal({ workerId, open, onClose }) {
             >
               <CalendarCheck className="h-3.5 w-3.5 inline mr-1.5" />
               Attendance Calendar
-            </button>
-            <button
-              type="button"
-              onClick={() => setModalTab("finance")}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                modalTab === "finance"
-                  ? "bg-amber-400 text-slate-950 shadow-sm"
-                  : "bg-white/10 text-teal-200 hover:bg-white/20"
-              }`}
-            >
-              <Wallet className="h-3.5 w-3.5 inline mr-1.5" />
-              Account & Finance
             </button>
           </div>
         </div>
@@ -401,40 +694,12 @@ export default function WorkerViewModal({ workerId, open, onClose }) {
             </div>
           )}
 
+          {/* 2. MEAL ATTENDANCE CALENDAR TAB */}
           {data && !loading && modalTab === "calendar" && (
-            <AttendanceCalendar
+            <StudentMealCalendarView
               workerId={workerId}
               worker={data.worker}
-              isAdmin={true}
             />
-          )}
-
-          {data && !loading && modalTab === "finance" && (
-            <>
-              {/* Highlight Financial Summary */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
-                <div className="bg-white border border-stone-200 rounded-2xl p-4 sm:p-5 shadow-sm">
-                  <p className="text-xs sm:text-sm text-slate-500 font-medium">Monthly Fee / Salary</p>
-                  <p className="font-display text-xl sm:text-2xl font-extrabold text-slate-900 mt-1">
-                    {money(data.summary.monthly_salary)}
-                  </p>
-                </div>
-
-                <div className="bg-teal-50 border border-teal-200 rounded-2xl p-4 sm:p-5 shadow-sm">
-                  <p className="text-xs sm:text-sm text-teal-800 font-semibold">Earned / Charge</p>
-                  <p className="font-display text-xl sm:text-2xl font-extrabold text-teal-900 mt-1">
-                    {money(data.summary.earned_salary)}
-                  </p>
-                </div>
-
-                <div className="bg-white border border-stone-200 rounded-2xl p-4 sm:p-5 shadow-sm">
-                  <p className="text-xs sm:text-sm text-slate-500 font-medium">Paid This Month</p>
-                  <p className="font-display text-xl sm:text-2xl font-extrabold text-emerald-800 mt-1">
-                    {money(data.summary.paid_this_month)}
-                  </p>
-                </div>
-              </div>
-            </>
           )}
         </div>
       </DialogContent>
