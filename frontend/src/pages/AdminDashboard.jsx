@@ -18,6 +18,7 @@ import AttendanceCalendar from "@/components/attendance/AttendanceCalendar";
 import SalarySlipModal from "@/components/salary/SalarySlipModal";
 import MessageBubble from "@/components/chat/MessageBubble";
 import VoiceRecorder from "@/components/chat/VoiceRecorder";
+import AudioPlayer from "@/components/chat/AudioPlayer";
 import SpeechTyping from "@/components/chat/SpeechTyping";
 import useSmartChatScroll from "@/components/chat/useSmartChatScroll";
 import { clearConversationNotifications, enablePushNotifications, pushSupported, updateAppBadge } from "@/lib/notifications";
@@ -3475,14 +3476,12 @@ function MessagesSection({ workers, admin, onUnreadChange }) {
                               >
                                 {/* Audio or Text */}
                                 {m.message_type === "audio" ? (
-                                  <div className="flex items-center gap-2 py-1">
-                                    <div className="h-8 w-8 rounded-full bg-teal-800 text-white flex items-center justify-center shrink-0">
-                                      🎵
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="h-1.5 bg-teal-600/40 rounded-full w-28 sm:w-36" />
-                                      <p className="text-[10px] text-slate-500 mt-1">{m.duration ? `${Math.round(m.duration)}s` : "Voice note"}</p>
-                                    </div>
+                                  <div className="py-1">
+                                    <AudioPlayer
+                                      audioUrl={m.audio_url || `/api/chat/audio/${m.id}`}
+                                      duration={m.duration}
+                                      own={isMe}
+                                    />
                                   </div>
                                 ) : (
                                   <p className="text-sm leading-snug break-words whitespace-pre-wrap">{m.text}</p>

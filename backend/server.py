@@ -2640,13 +2640,14 @@ async def worker_send_message(body: MessageCreate, user: dict = Depends(get_curr
         "worker_id": worker_id, "sender_type": "worker", "sender_id": user["user_id"],
         "message_type": body.message_type, "text": (body.text or "").strip(),
         "audio_asset_id": body.audio_asset_id,
+        "audio_url": f"/api/chat/audio/{msg_id}" if body.message_type == "audio" else None,
         "duration": (audio_asset or {}).get("duration") or body.duration or 0.0,
         "created_at": now_iso, "read_at": None, "expires_at": expires_at,
     }
     await db.messages.insert_one(msg_doc)
     if audio_asset:
         await db.voice_assets.update_one(
-            {"id": audio_asset["id"], "message_id": None},
+            {"id": audio_asset["id"]},
             {"$set": {"message_id": msg_id, "expires_at": expires_at}},
         )
 
@@ -2728,7 +2729,6 @@ async def send_message(body: MessageCreate, request: Request):
         audio_asset = await db.voice_assets.find_one({
             "id": body.audio_asset_id, "business_id": biz_id, "worker_id": worker_id,
             "conversation_id": conv_id, "uploaded_by": auth_user["id"] if is_admin else auth_user["user_id"],
-            "message_id": None,
         }, {"_id": 0})
         if not audio_asset:
             raise HTTPException(status_code=404, detail="Audio asset not found")
@@ -2755,6 +2755,7 @@ async def send_message(body: MessageCreate, request: Request):
         "message_type": body.message_type,
         "text": (body.text or "").strip(),
         "audio_asset_id": body.audio_asset_id,
+        "audio_url": f"/api/chat/audio/{msg_id}" if body.message_type == "audio" else None,
         "duration": (audio_asset or {}).get("duration") or body.duration or 0.0,
         "created_at": now_iso,
         "read_at": None,
@@ -2764,7 +2765,7 @@ async def send_message(body: MessageCreate, request: Request):
     await db.messages.insert_one(msg_doc)
     if audio_asset:
         await db.voice_assets.update_one(
-            {"id": audio_asset["id"], "message_id": None},
+            {"id": audio_asset["id"]},
             {"$set": {"message_id": msg_id, "expires_at": expires_at}},
         )
 
@@ -2826,13 +2827,37 @@ async def upload_audio(conversation_id: str = Form(...), file: UploadFile = File
 
 @api_router.get("/chat/audio/{message_id}")
 async def get_audio_file(message_id: str, request: Request):
+    actor = None
+    is_admin = False
     try:
         actor, is_admin = await get_current_admin(request), True
     except Exception:
         try:
             actor, is_admin = await get_current_worker(request), False
         except Exception:
-            raise HTTPException(status_code=401, detail="Not authenticated")
+            # Query param token fallback for HTML5 <audio> elements
+            q_token = request.query_params.get("token") or request.query_params.get("session_token")
+            if q_token:
+                try:
+                    payload = jwt.decode(q_token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+                    admin = await db.admins.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+                    if admin:
+                        biz = await get_or_create_business_for_admin(admin)
+                        admin["business_id"] = biz["id"]
+                        actor, is_admin = admin, True
+                except Exception:
+                    pass
+                if not actor:
+                    session = await db.worker_sessions.find_one({"session_token": q_token}, {"_id": 0})
+                    if session:
+                        worker = await db.workers.find_one({"id": session["worker_id"], "business_id": session["business_id"]}, {"_id": 0})
+                        if worker:
+                            worker["worker_id"] = worker["id"]
+                            actor, is_admin = worker, False
+
+    if not actor:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
     message = await db.messages.find_one(
         {"id": message_id, "message_type": "audio", **visible_message_filter()},
         {"_id": 0},
@@ -2841,18 +2866,37 @@ async def get_audio_file(message_id: str, request: Request):
         not is_admin and (message.get("business_id") != actor["business_id"] or message.get("worker_id") != actor["worker_id"])
     ):
         raise HTTPException(status_code=404, detail="Audio message not found")
-    asset = await db.voice_assets.find_one({"id": message.get("audio_asset_id"), "message_id": message_id}, {"_id": 0})
+
+    asset = await db.voice_assets.find_one({"id": message.get("audio_asset_id")}, {"_id": 0})
     if not asset:
-        raise HTTPException(status_code=404, detail="Audio message not found")
+        raise HTTPException(status_code=404, detail="Audio file asset not found")
+
     target = voice_storage.get_voice_message_url(asset)
+    mime_type = asset.get("mime_type", "audio/webm")
+
     if isinstance(target, Path):
-        return FileResponse(target, media_type=asset.get("mime_type", "audio/webm"))
+        return FileResponse(
+            target,
+            media_type=mime_type,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "public, max-age=86400",
+            }
+        )
+
     async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as http:
         upstream = await http.get(target)
     if upstream.status_code != 200:
         raise HTTPException(status_code=502, detail="Audio storage is temporarily unavailable")
-    return Response(content=upstream.content, media_type=asset.get("mime_type", "audio/webm"),
-                    headers={"Cache-Control": "private, no-store"})
+
+    return Response(
+        content=upstream.content,
+        media_type=mime_type,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=86400",
+        }
+    )
 
 
 # ---------------- Base & Health ----------------
