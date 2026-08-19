@@ -85,6 +85,7 @@ api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+_rate_buckets: dict[str, deque] = defaultdict(deque)
 _voice_expiration_task = None
 _meal_cleanup_task = None
 _meal_reminder_task = None
