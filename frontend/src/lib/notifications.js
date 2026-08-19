@@ -1,25 +1,89 @@
 import { adminApi, workerApi } from "./api";
 
-const publicKey = process.env.REACT_APP_VAPID_PUBLIC_KEY;
+let cachedPublicKey = process.env.REACT_APP_VAPID_PUBLIC_KEY || "";
 
 function keyBytes(value) {
-  const padded = `${value}${"=".repeat((4 - value.length % 4) % 4)}`.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = `${value}${"=".repeat((4 - (value.length % 4)) % 4)}`.replace(/-/g, "+").replace(/_/g, "/");
   const raw = atob(padded);
   return Uint8Array.from(raw, (char) => char.charCodeAt(0));
 }
 
-export const pushSupported = () => Boolean(publicKey && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
+export const pushSupported = () =>
+  Boolean(typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
 
-export async function enablePushNotifications(isAdmin) {
-  if (!pushSupported()) throw new Error("Push notifications are unavailable in this browser or not configured yet.");
-  const permission = await Notification.requestPermission();
-  if (permission !== "granted") throw new Error("Notification permission was not granted.");
-  const registration = await navigator.serviceWorker.register("/service-worker.js");
-  const subscription = await registration.pushManager.getSubscription() || await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: keyBytes(publicKey),
-  });
-  await (isAdmin ? adminApi : workerApi).post("/push/subscribe", subscription.toJSON());
+export async function getVapidPublicKey(isAdmin = false) {
+  if (cachedPublicKey && cachedPublicKey.trim()) return cachedPublicKey.trim();
+  try {
+    const api = isAdmin ? adminApi : workerApi;
+    const res = await api.get("/push/public-key");
+    if (res.data?.public_key) {
+      cachedPublicKey = res.data.public_key.trim();
+      return cachedPublicKey;
+    }
+  } catch (e) {
+    console.warn("Could not fetch VAPID public key from backend:", e);
+  }
+  return "";
+}
+
+export async function enablePushNotifications(isAdmin = false) {
+  if (!pushSupported()) {
+    console.warn("Push notifications are not supported in this browser.");
+    return false;
+  }
+
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      console.warn("Notification permission was not granted by user.");
+      return false;
+    }
+
+    const key = await getVapidPublicKey(isAdmin);
+    if (!key) {
+      console.warn("No VAPID public key available to subscribe.");
+      return false;
+    }
+
+    const registration = await navigator.serviceWorker.register("/service-worker.js");
+    await navigator.serviceWorker.ready;
+
+    let subscription = await registration.pushManager.getSubscription();
+
+    // If subscription already exists, check or recreate if key changed
+    if (subscription) {
+      try {
+        const api = isAdmin ? adminApi : workerApi;
+        await api.post("/push/subscribe", subscription.toJSON());
+        return true;
+      } catch (_) {
+        try {
+          await subscription.unsubscribe();
+        } catch (e) {}
+        subscription = null;
+      }
+    }
+
+    // Subscribe with current key
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: keyBytes(key),
+    });
+
+    const api = isAdmin ? adminApi : workerApi;
+    await api.post("/push/subscribe", subscription.toJSON());
+    console.info("Push notifications successfully enabled and registered with backend.");
+    return true;
+  } catch (err) {
+    console.warn("Push registration notice:", err);
+    return false;
+  }
+}
+
+export async function sendTestNotification(isAdmin = false) {
+  const api = isAdmin ? adminApi : workerApi;
+  const res = await api.post("/push/test");
+  return res.data;
 }
 
 export function updateAppBadge(count) {
@@ -45,3 +109,4 @@ export async function clearConversationNotifications(conversationId, totalUnread
     // Notification cleanup is best-effort and must never interrupt chat reads.
   }
 }
+

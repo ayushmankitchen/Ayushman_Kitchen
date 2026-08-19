@@ -21,7 +21,7 @@ import VoiceRecorder from "@/components/chat/VoiceRecorder";
 import AudioPlayer from "@/components/chat/AudioPlayer";
 import SpeechTyping from "@/components/chat/SpeechTyping";
 import useSmartChatScroll from "@/components/chat/useSmartChatScroll";
-import { clearConversationNotifications, enablePushNotifications, pushSupported, updateAppBadge } from "@/lib/notifications";
+import { clearConversationNotifications, enablePushNotifications, pushSupported, sendTestNotification, updateAppBadge } from "@/lib/notifications";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   ChefHat, GraduationCap, HardHat, LayoutDashboard, Users, CalendarCheck, Wallet, Sparkles, LogOut,
@@ -1220,15 +1220,38 @@ function OverviewSection({ workers, admin, onNavigate }) {
                 <p className="text-[11px] text-slate-500">Student vacation, meal cancellations & updates</p>
               </div>
             </div>
-            <Button
-              type="button"
-              onClick={loadOverviewData}
-              variant="ghost"
-              size="sm"
-              className="rounded-xl text-xs h-8 text-teal-800"
-            >
-              <RefreshCw className="h-3.5 w-3.5 mr-1" /> Refresh
-            </Button>
+            <div className="flex items-center gap-1.5">
+              <Button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await enablePushNotifications(true);
+                    const res = await sendTestNotification(true);
+                    if (res?.ok) {
+                      toast.success(res.message || "Test notification sent! Check your device.");
+                    } else {
+                      toast.warning(res.message || "Please enable notification permission first.");
+                    }
+                  } catch (e) {
+                    toast.error("Could not trigger test push: " + (e?.message || e));
+                  }
+                }}
+                variant="outline"
+                size="sm"
+                className="rounded-xl text-xs h-8 text-amber-900 border-amber-300 bg-amber-50 hover:bg-amber-100"
+              >
+                🔔 Test Push
+              </Button>
+              <Button
+                type="button"
+                onClick={loadOverviewData}
+                variant="ghost"
+                size="sm"
+                className="rounded-xl text-xs h-8 text-teal-800"
+              >
+                <RefreshCw className="h-3.5 w-3.5 mr-1" /> Refresh
+              </Button>
+            </div>
           </div>
 
           {activityFeed.length === 0 ? (

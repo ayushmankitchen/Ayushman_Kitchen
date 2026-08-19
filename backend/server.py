@@ -2312,20 +2312,61 @@ async def deliver_chat_push(*, business_id: str, worker_id: str, sender_type: st
         query = {"business_id": business_id, "recipient_type": "worker", "recipient_id": worker_id}
         unread_query = {"business_id": business_id, "worker_id": worker_id, "sender_type": "owner", "read_at": None}
         url = f"/worker?conversation={conversation_id}"
-        title = "Ayushman Kitchen: New message"
+        title = "💬 Message from Kitchen Admin"
     else:
+        worker = await db.workers.find_one({"id": worker_id, "business_id": business_id}, {"_id": 0, "name": 1})
+        wname = (worker or {}).get("name", "Student")
         query = {"business_id": business_id, "recipient_type": "admin"}
         unread_query = {"business_id": business_id, "sender_type": "worker", "read_at": None}
         url = f"/admin?conversation={conversation_id}"
-        title = "WorkForce: Worker message"
+        title = f"💬 New message from {wname}"
+
     subscriptions = await db.push_subscriptions.find(query, {"_id": 0}).to_list(100)
     unread_count = await db.messages.count_documents(unread_query)
     payload = {
-        "title": title, "body": preview[:160], "url": url,
-        "conversation_id": conversation_id, "unread_count": unread_count,
+        "title": title,
+        "body": preview[:160] if preview else "You have a new message.",
+        "url": url,
+        "conversation_id": conversation_id,
+        "unread_count": unread_count,
+        "tag": conversation_id or "chat-message",
     }
     for subscription in subscriptions:
         await push.send(subscription, payload)
+
+
+@api_router.post("/push/test")
+async def send_test_push(request: Request):
+    """Send an immediate test push notification to the calling user's registered devices."""
+    try:
+        actor = await get_current_admin(request)
+        recipient_type, recipient_id = "admin", actor["id"]
+        title = "🔔 Ayushman Kitchen Test"
+        body = "Push notifications are working perfectly on this device! 🎉"
+        url = "/admin"
+    except Exception:
+        try:
+            actor = await get_current_worker(request)
+            recipient_type, recipient_id = "worker", actor["worker_id"]
+            title = "🔔 Ayushman Kitchen Test"
+            body = "Push notifications are working perfectly on your phone! 🎉"
+            url = "/worker"
+        except Exception:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+    biz_id = actor["business_id"]
+    query = {"business_id": biz_id, "recipient_type": recipient_type, "recipient_id": recipient_id}
+    subs = await db.push_subscriptions.find(query, {"_id": 0}).to_list(10)
+    if not subs:
+        return {"ok": False, "sent_count": 0, "message": "No active device subscriptions found. Please enable notifications in your browser first."}
+
+    sent = 0
+    for s in subs:
+        ok = await push.send(s, {"title": title, "body": body, "url": url, "tag": "test-push"})
+        if ok:
+            sent += 1
+
+    return {"ok": True, "sent_count": sent, "message": f"Test push sent to {sent} device(s)!"}
 
 
 async def deliver_admin_push(*, business_id: str, title: str, body: str, url: str = "/admin", tag: str = "admin-alert") -> None:

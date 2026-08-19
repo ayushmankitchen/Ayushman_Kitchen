@@ -15,7 +15,7 @@ import VoiceRecorder from "@/components/chat/VoiceRecorder";
 import AudioPlayer from "@/components/chat/AudioPlayer";
 import SpeechTyping from "@/components/chat/SpeechTyping";
 import useSmartChatScroll from "@/components/chat/useSmartChatScroll";
-import { clearConversationNotifications, enablePushNotifications, pushSupported, updateAppBadge } from "@/lib/notifications";
+import { clearConversationNotifications, enablePushNotifications, pushSupported, sendTestNotification, updateAppBadge } from "@/lib/notifications";
 import {
   Loader2,
   LogOut,
@@ -1631,6 +1631,27 @@ export default function WorkerDashboard() {
                     </p>
                     <p className="text-xs text-teal-300">Kitchen Administration Chat</p>
                   </div>
+                  <Button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await enablePushNotifications(false);
+                        const res = await sendTestNotification(false);
+                        if (res?.ok) {
+                          toast.success(res.message || "Test notification sent! Check your phone.");
+                        } else {
+                          toast.warning(res.message || "Please allow notification permission in your browser.");
+                        }
+                      } catch (e) {
+                        toast.error("Could not trigger test push: " + (e?.message || e));
+                      }
+                    }}
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-[11px] font-bold text-amber-300 hover:bg-white/10 rounded-lg px-2"
+                  >
+                    🔔 Test Push
+                  </Button>
                   <div className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" title="Online" />
                 </div>
 

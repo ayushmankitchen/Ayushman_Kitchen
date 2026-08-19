@@ -11,10 +11,13 @@ self.addEventListener("push", (event) => {
       ? self.navigator.clearAppBadge()
       : Promise.resolve();
   event.waitUntil(Promise.all([
-    self.registration.showNotification(data.title || "WorkForce", {
-      body: data.body || "You have a new message.",
+    self.registration.showNotification(data.title || "Ayushman Kitchen", {
+      body: data.body || "You have a new update.",
+      icon: "/favicon.ico",
+      badge: "/favicon.ico",
+      vibrate: [200, 100, 200],
       data: { url: data.url || "/", conversationId: data.conversation_id || null },
-      tag: data.conversation_id || "workforce-message",
+      tag: data.tag || data.conversation_id || `ayushman-kitchen-${Date.now()}`,
       renotify: true,
     }),
     badgeUpdate,
