@@ -3208,16 +3208,24 @@ async def get_low_balance_students(admin: dict = Depends(get_current_admin)):
     for s in students:
         stats = await compute_worker_meal_consumption(biz_id, s)
         rem = stats.get("total_remaining")
-        if rem is not None and rem <= 4:
+        is_exp = stats.get("is_expired", False)
+        days_left = stats.get("validity_days_left", 45)
+        # Alert if expired OR <= 4 meals remaining OR <= 5 validity days remaining
+        if is_exp or (rem is not None and rem <= 4) or days_left <= 5:
             low_balance_list.append({
                 "student": s,
                 "stats": stats,
-                "remaining": rem,
+                "remaining": rem if rem is not None else 0,
                 "total_quota": stats.get("total_quota", 60),
+                "is_expired": is_exp,
+                "is_validity_expired": stats.get("is_validity_expired", False),
+                "validity_days_left": days_left,
+                "validity_expiry_date": stats.get("validity_expiry_date"),
+                "lapsed_meals": stats.get("lapsed_meals", 0),
             })
 
-    # Sort lowest remaining first
-    low_balance_list.sort(key=lambda x: x["remaining"])
+    # Sort expired / lowest days / lowest balance first
+    low_balance_list.sort(key=lambda x: (not x["is_expired"], x["validity_days_left"], x["remaining"]))
     return low_balance_list
 
 
@@ -3331,7 +3339,30 @@ async def compute_worker_meal_consumption(biz_id: str, worker: dict):
                     dinner_used += 1
 
     total_used = lunch_used + dinner_used
-    total_remaining = max(0, total_quota - total_used) if total_quota > 0 else None
+    raw_remaining = max(0, total_quota - total_used) if total_quota > 0 else 0
+
+    # 45-Day Maximum Subscription Validity
+    SUBSCRIPTION_MAX_VALIDITY_DAYS = 45
+    days_elapsed = (today_dt - start_dt).days
+    validity_expiry_dt = start_dt + timedelta(days=SUBSCRIPTION_MAX_VALIDITY_DAYS)
+    validity_expiry_date = validity_expiry_dt.strftime("%Y-%m-%d")
+    validity_days_left = max(0, SUBSCRIPTION_MAX_VALIDITY_DAYS - days_elapsed)
+    is_validity_expired = days_elapsed > SUBSCRIPTION_MAX_VALIDITY_DAYS
+
+    lapsed_meals = 0
+    if is_validity_expired:
+        lapsed_meals = raw_remaining
+        total_remaining = 0
+    else:
+        total_remaining = raw_remaining
+
+    is_expired = is_validity_expired or (total_remaining == 0 and total_quota > 0)
+    expiry_reason = None
+    if is_validity_expired:
+        expiry_reason = "45_DAYS_EXPIRED"
+    elif total_remaining == 0 and total_quota > 0:
+        expiry_reason = "QUOTA_EXHAUSTED"
+
     total_skipped = lunch_skipped + dinner_skipped
 
     return {
@@ -3347,6 +3378,15 @@ async def compute_worker_meal_consumption(biz_id: str, worker: dict):
         "dinner_skipped": dinner_skipped,
         "total_skipped": total_skipped,
         "total_remaining": total_remaining,
+        "raw_remaining": raw_remaining,
+        "validity_days": SUBSCRIPTION_MAX_VALIDITY_DAYS,
+        "validity_expiry_date": validity_expiry_date,
+        "validity_days_left": validity_days_left,
+        "days_elapsed": days_elapsed,
+        "is_validity_expired": is_validity_expired,
+        "is_expired": is_expired,
+        "expiry_reason": expiry_reason,
+        "lapsed_meals": lapsed_meals,
     }
 
 
@@ -3528,8 +3568,16 @@ async def compute_student_meal_calendar(biz_id: str, wid: str, month: Optional[s
         "meal_plan_type": meal_plan_type,
         "total_quota": stats["total_quota"],
         "total_remaining": stats["total_remaining"],
+        "raw_remaining": stats.get("raw_remaining", stats["total_remaining"]),
         "total_used": stats["total_used"],
         "total_skipped": stats["total_skipped"],
+        "validity_days": stats.get("validity_days", 45),
+        "validity_expiry_date": stats.get("validity_expiry_date"),
+        "validity_days_left": stats.get("validity_days_left", 45),
+        "is_validity_expired": stats.get("is_validity_expired", False),
+        "is_expired": stats.get("is_expired", False),
+        "expiry_reason": stats.get("expiry_reason"),
+        "lapsed_meals": stats.get("lapsed_meals", 0),
         "present": len([d for d in result if d["status"] == "PRESENT"]),
         "partial": len([d for d in result if d["status"] == "PARTIAL"]),
         "absent": len([d for d in result if d["status"] == "ABSENT"]),
@@ -4260,6 +4308,8 @@ async def get_student_today_meal(
             "is_customized": bool(selection)
         }
 
+    stats = await compute_worker_meal_consumption(biz_id, worker)
+
     return {
         "date": target_date,
         "day_name": day_data.get("day_name", dt.strftime("%A")),
@@ -4271,6 +4321,7 @@ async def get_student_today_meal(
         "delivery_notes": default_delivery_notes,
         "is_on_leave": bool(active_leave),
         "active_leave": active_leave,
+        "subscription_stats": stats,
         "lunch": process_student_slot("lunch", lunch_menu),
         "dinner": process_student_slot("dinner", dinner_menu),
     }
@@ -4313,6 +4364,20 @@ async def save_student_meal_selection(
         raise HTTPException(status_code=400, detail="Your subscription only includes Lunch service.")
     if meal_plan_type == "DINNER_ONLY" and slot_key == "lunch":
         raise HTTPException(status_code=400, detail="Your subscription only includes Dinner service.")
+
+    # 45-Day Subscription Validity and Quota Exhaustion Check
+    stats = await compute_worker_meal_consumption(biz_id, worker)
+    if action != "CANCEL":
+        if stats.get("is_validity_expired"):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Your subscription validity has expired (45-day validity period ended on {stats.get('validity_expiry_date')}). Please renew your subscription to order meals."
+            )
+        if stats.get("total_remaining") == 0:
+            raise HTTPException(
+                status_code=403,
+                detail="All meals in your current subscription pool have been completed. Please renew your subscription to order meals."
+            )
 
     # Check if student is on active vacation/leave
     active_leave = await db.worker_leaves.find_one({

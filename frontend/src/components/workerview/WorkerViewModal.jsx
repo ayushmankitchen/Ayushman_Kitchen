@@ -162,14 +162,27 @@ function StudentMealCalendarView({ workerId, worker }) {
 
           {/* 3. Remaining Meals */}
           <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 shadow-xs space-y-0.5">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900 block">🍱 Remaining Balance</span>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900 block">🍱 Remaining</span>
+              {summary.is_validity_expired ? (
+                <span className="text-[9px] font-bold bg-rose-600 text-white px-1.5 py-0.5 rounded">
+                  Expired (45d)
+                </span>
+              ) : (
+                <span className="text-[9px] font-bold bg-amber-200 text-amber-950 px-1.5 py-0.5 rounded">
+                  {summary.validity_days_left}d left
+                </span>
+              )}
+            </div>
             <p className="font-display text-xl font-extrabold text-amber-950">
               {summary.total_remaining !== null ? summary.total_remaining : "∞"}
               <span className="text-[11px] font-normal text-slate-500 ml-1">
                 / {summary.total_quota || (summary.meal_plan_type === "BOTH" ? 60 : 30)}
               </span>
             </p>
-            <p className="text-[10px] text-amber-800">Remaining quota</p>
+            <p className="text-[10px] text-amber-800 truncate">
+              {summary.is_validity_expired ? `Ended ${summary.validity_expiry_date}` : `Valid till ${summary.validity_expiry_date}`}
+            </p>
           </div>
 
           {/* 4. Skipped / Cancelled */}
@@ -534,15 +547,28 @@ export default function WorkerViewModal({ workerId, open, onClose }) {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
                 {/* Total Balance */}
                 <div className="p-4 rounded-2xl bg-[#102f2c] text-white shadow-md space-y-1 col-span-2 sm:col-span-1">
-                  <span className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1">
-                    <ChefHat className="h-3.5 w-3.5" /> Total Remaining
-                  </span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1">
+                      <ChefHat className="h-3.5 w-3.5" /> Total Remaining
+                    </span>
+                    {mealStats.is_validity_expired ? (
+                      <span className="text-[9px] font-bold bg-rose-600 text-white px-1.5 py-0.5 rounded">
+                        Expired (45d)
+                      </span>
+                    ) : (
+                      <span className="text-[9px] font-bold bg-teal-900 text-teal-200 px-1.5 py-0.5 rounded">
+                        {mealStats.validity_days_left}d left
+                      </span>
+                    )}
+                  </div>
                   <p className="font-display text-2xl font-extrabold text-amber-300">
                     {mealStats.total_remaining !== null ? mealStats.total_remaining : "∞"}
                     <span className="text-xs font-normal text-teal-200 ml-1">/ {mealStats.total_quota || 60}</span>
                   </p>
                   <p className="text-[11px] text-teal-200">
-                    Started: {mealStats.joining_date}
+                    {mealStats.is_validity_expired
+                      ? `45-day validity ended on ${mealStats.validity_expiry_date}`
+                      : `45-day validity until ${mealStats.validity_expiry_date}`}
                   </p>
                 </div>
 

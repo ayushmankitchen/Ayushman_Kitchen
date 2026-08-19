@@ -1148,9 +1148,9 @@ function OverviewSection({ workers, admin, onNavigate }) {
               </div>
               <div>
                 <h3 className="font-display font-bold text-base text-rose-950">
-                  Subscriptions Ending Soon (≤ 4 Meals Left)
+                  Subscriptions Expired / Ending Soon
                 </h3>
-                <p className="text-[11px] text-rose-700">Students needing renewal within ~2 days</p>
+                <p className="text-[11px] text-rose-700">Students with 45-day expiry or ≤ 4 meals remaining</p>
               </div>
             </div>
             <Badge className="bg-rose-100 text-rose-900 border-rose-300 font-bold text-xs">
@@ -1160,7 +1160,7 @@ function OverviewSection({ workers, admin, onNavigate }) {
 
           {lowBalanceList.length === 0 ? (
             <div className="py-8 text-center text-slate-400 text-xs">
-              All students have sufficient meal balances 👍
+              All students have active valid subscriptions 👍
             </div>
           ) : (
             <div className="space-y-2.5 max-h-[320px] overflow-y-auto pr-1">
@@ -1169,17 +1169,34 @@ function OverviewSection({ workers, admin, onNavigate }) {
                   key={item.student.id}
                   className="p-3 rounded-2xl border border-rose-200 bg-rose-50/40 flex items-center justify-between gap-3 hover:bg-rose-50 transition-colors"
                 >
-                  <div>
-                    <span className="font-bold text-xs text-slate-900 block">{item.student.name}</span>
-                    <span className="text-[10px] text-rose-800 font-bold">
-                      {item.remaining} / {item.total_quota} meals remaining ({item.student.work_type} • {item.student.meal_plan_type || "BOTH"})
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-bold text-xs text-slate-900 truncate">{item.student.name}</span>
+                      {item.is_validity_expired ? (
+                        <span className="bg-rose-600 text-white text-[9px] font-bold px-1.5 py-0.2 rounded">
+                          Expired (45d)
+                        </span>
+                      ) : item.remaining === 0 ? (
+                        <span className="bg-rose-600 text-white text-[9px] font-bold px-1.5 py-0.2 rounded">
+                          0 Meals Left
+                        </span>
+                      ) : item.validity_days_left <= 5 ? (
+                        <span className="bg-amber-400 text-slate-950 text-[9px] font-bold px-1.5 py-0.2 rounded">
+                          {item.validity_days_left}d validity left
+                        </span>
+                      ) : null}
+                    </div>
+                    <span className="text-[10px] text-rose-800 font-medium block truncate">
+                      {item.is_validity_expired
+                        ? `45-day limit reached on ${item.validity_expiry_date} (${item.lapsed_meals || 0} lapsed meals)`
+                        : `${item.remaining} / ${item.total_quota} meals left · Valid till ${item.validity_expiry_date}`}
                     </span>
                   </div>
                   <Button
                     type="button"
                     onClick={() => openRenewModal(item.student)}
                     size="sm"
-                    className="bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold h-8 px-3 shrink-0"
+                    className="bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold h-8 px-3 shrink-0 shadow-xs"
                   >
                     🔄 Renew Plan
                   </Button>

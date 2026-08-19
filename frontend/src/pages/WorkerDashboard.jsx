@@ -989,8 +989,8 @@ export default function WorkerDashboard() {
                   </div>
                 </div>
 
-                {/* ⚠️ Low Balance Alert Banner (<= 4 meals remaining / 2 days) */}
-                {mealStats && mealStats.total_remaining !== null && mealStats.total_remaining <= 4 && (
+                {/* ⚠️ 45-Day Validity Expired Banner */}
+                {mealStats?.is_validity_expired && (
                   <div className="p-4 sm:p-5 rounded-3xl bg-rose-50 border-2 border-rose-300 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-start gap-3.5">
                       <div className="h-10 w-10 rounded-2xl bg-rose-200 text-rose-950 flex items-center justify-center font-bold shrink-0 mt-0.5">
@@ -999,14 +999,87 @@ export default function WorkerDashboard() {
                       <div>
                         <div className="flex items-center gap-2">
                           <h3 className="font-display font-bold text-sm sm:text-base text-rose-950">
-                            ⚠️ Meal Subscription Ending Soon ({mealStats.total_remaining} Meals Left)
+                            ⚠️ 45-Day Subscription Expired ({mealStats.validity_expiry_date})
+                          </h3>
+                          <Badge className="bg-rose-600 text-white border-0 text-[10px] font-bold">
+                            Validity Expired
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-rose-800 mt-0.5 leading-snug">
+                          Your 45-day subscription validity period ended on <strong>{mealStats.validity_expiry_date}</strong> ({mealStats.days_elapsed} days elapsed).
+                          {mealStats.lapsed_meals > 0 ? ` ${mealStats.lapsed_meals} unconsumed meals have lapsed.` : ""} Please contact mess management to renew your subscription.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ⚠️ Quota Finished (0 meals left) */}
+                {!mealStats?.is_validity_expired && mealStats?.total_remaining === 0 && mealStats?.total_quota > 0 && (
+                  <div className="p-4 sm:p-5 rounded-3xl bg-rose-50 border-2 border-rose-300 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="h-10 w-10 rounded-2xl bg-rose-200 text-rose-950 flex items-center justify-center font-bold shrink-0 mt-0.5">
+                        <AlertCircle className="h-5 w-5 text-rose-700" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-display font-bold text-sm sm:text-base text-rose-950">
+                            ⚠️ Subscription Completed (0 Meals Left)
+                          </h3>
+                          <Badge className="bg-rose-600 text-white border-0 text-[10px] font-bold">
+                            Renewal Needed
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-rose-800 mt-0.5 leading-snug">
+                          All {mealStats.total_quota} meals in your current subscription pool have been consumed. Please contact mess management to renew your meal plan.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ⏳ Expiring Soon in <= 5 days */}
+                {!mealStats?.is_validity_expired && mealStats?.validity_days_left <= 5 && (mealStats?.total_remaining ?? 0) > 0 && (
+                  <div className="p-4 sm:p-5 rounded-3xl bg-amber-50 border-2 border-amber-300 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="h-10 w-10 rounded-2xl bg-amber-200 text-amber-950 flex items-center justify-center font-bold shrink-0 mt-0.5">
+                        <Clock className="h-5 w-5 text-amber-800" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-display font-bold text-sm sm:text-base text-amber-950">
+                            ⏳ Subscription Validity Expiring in {mealStats.validity_days_left} Days
+                          </h3>
+                          <Badge className="bg-amber-300 text-amber-950 border-amber-400 text-[10px] font-bold">
+                            Exp: {mealStats.validity_expiry_date}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-amber-800 mt-0.5 leading-snug">
+                          Your 45-day validity window ends on <strong>{mealStats.validity_expiry_date}</strong>. You have {mealStats.total_remaining} remaining meals. Any unconsumed meals will expire after 45 days.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ⚠️ Low Balance Alert Banner (<= 4 meals remaining and > 5 validity days) */}
+                {!mealStats?.is_validity_expired && mealStats?.total_remaining !== null && mealStats?.total_remaining > 0 && mealStats?.total_remaining <= 4 && mealStats?.validity_days_left > 5 && (
+                  <div className="p-4 sm:p-5 rounded-3xl bg-rose-50 border-2 border-rose-300 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="h-10 w-10 rounded-2xl bg-rose-200 text-rose-950 flex items-center justify-center font-bold shrink-0 mt-0.5">
+                        <AlertCircle className="h-5 w-5 text-rose-700" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-display font-bold text-sm sm:text-base text-rose-950">
+                            ⚠️ Low Meal Balance ({mealStats.total_remaining} Meals Left)
                           </h3>
                           <Badge className="bg-rose-200 text-rose-900 border-rose-300 text-[10px] font-bold">
                             Renewal Due
                           </Badge>
                         </div>
                         <p className="text-xs text-rose-800 mt-0.5 leading-snug">
-                          You only have {mealStats.total_remaining} meals remaining in your pool (approx 2 days). Please contact mess administration to renew your meal plan.
+                          You only have {mealStats.total_remaining} meals remaining in your pool. Please contact mess administration to renew your meal plan.
                         </p>
                       </div>
                     </div>
@@ -1053,9 +1126,20 @@ export default function WorkerDashboard() {
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
                       {/* Total Remaining Quota Card */}
                       <div className="bg-[#102f2c] text-white rounded-3xl p-4 sm:p-5 shadow-md space-y-1 flex flex-col justify-between col-span-2 sm:col-span-1">
-                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-300 flex items-center gap-1">
-                          <ChefHat className="h-3.5 w-3.5" /> Total Remaining Balance
-                        </span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-300 flex items-center gap-1">
+                            <ChefHat className="h-3.5 w-3.5" /> Remaining Balance
+                          </span>
+                          {mealStats.is_validity_expired ? (
+                            <span className="text-[9px] font-bold bg-rose-600 text-white px-1.5 py-0.5 rounded-md">
+                              Expired (45d)
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-bold bg-teal-900 text-teal-200 px-1.5 py-0.5 rounded-md">
+                              {mealStats.validity_days_left}d left
+                            </span>
+                          )}
+                        </div>
                         <div>
                           <p className="font-display text-2xl sm:text-3xl font-extrabold text-amber-300">
                             {mealStats.total_remaining !== null ? mealStats.total_remaining : "∞"}
@@ -1063,8 +1147,10 @@ export default function WorkerDashboard() {
                               / {mealStats.total_quota || (mealStats.meal_plan_type === "BOTH" ? 60 : 30)}
                             </span>
                           </p>
-                          <p className="text-[11px] text-teal-200 mt-0.5">
-                            Combined {mealStats.meal_plan_type === "BOTH" ? "60-meal" : "30-meal"} pool · From {mealStats.joining_date}
+                          <p className="text-[10px] text-teal-200 mt-0.5 leading-tight">
+                            {mealStats.is_validity_expired
+                              ? `Validity ended on ${mealStats.validity_expiry_date}`
+                              : `45-day validity until ${mealStats.validity_expiry_date}`}
                           </p>
                         </div>
                       </div>
