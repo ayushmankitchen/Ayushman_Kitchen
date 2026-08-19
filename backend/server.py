@@ -85,9 +85,9 @@ api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-_rate_buckets: dict[str, deque] = defaultdict(deque)
 _voice_expiration_task = None
 _meal_cleanup_task = None
+_meal_reminder_task = None
 
 
 def parse_utc_datetime(value: Any) -> Optional[datetime]:
@@ -2328,6 +2328,67 @@ async def deliver_chat_push(*, business_id: str, worker_id: str, sender_type: st
         await push.send(subscription, payload)
 
 
+async def deliver_admin_push(*, business_id: str, title: str, body: str, url: str = "/admin", tag: str = "admin-alert") -> None:
+    """Deliver push notification to all admin subscriptions for a business."""
+    if not push.configured():
+        return
+    query = {"business_id": business_id, "recipient_type": "admin"}
+    subscriptions = await db.push_subscriptions.find(query, {"_id": 0}).to_list(100)
+    if not subscriptions:
+        return
+    payload = {
+        "title": title,
+        "body": body[:160],
+        "url": url,
+        "tag": tag,
+        "conversation_id": None,
+    }
+    for subscription in subscriptions:
+        await push.send(subscription, payload)
+
+
+async def deliver_student_broadcast_push(*, business_id: str, meal_slot: str, title: str, body: str, url: str = "/worker", tag: str = "meal-reminder") -> None:
+    """Deliver meal reminder push notification to active students eligible for this meal slot (excluding vacation)."""
+    if not push.configured():
+        return
+    today = get_today_date()
+    # Find active leaves
+    leaves = await db.worker_leaves.find(
+        {"business_id": business_id, "status": "ACTIVE", "start_date": {"$lte": today}, "end_date": {"$gte": today}},
+        {"worker_id": 1, "_id": 0}
+    ).to_list(1000)
+    on_leave_wids = {lv["worker_id"] for lv in leaves}
+
+    # Find active students eligible for meal_slot
+    plan_filter = ["BOTH", f"{meal_slot.upper()}_ONLY"]
+    active_students = await db.workers.find(
+        {"business_id": business_id, "status": "ACTIVE", "meal_plan_type": {"$in": plan_filter}},
+        {"id": 1, "_id": 0}
+    ).to_list(2000)
+
+    target_wids = [s["id"] for s in active_students if s["id"] not in on_leave_wids]
+    if not target_wids:
+        return
+
+    subscriptions = await db.push_subscriptions.find(
+        {"business_id": business_id, "recipient_type": "worker", "recipient_id": {"$in": target_wids}},
+        {"_id": 0}
+    ).to_list(2000)
+
+    if not subscriptions:
+        return
+
+    payload = {
+        "title": title,
+        "body": body[:160],
+        "url": url,
+        "tag": tag,
+        "conversation_id": None,
+    }
+    for subscription in subscriptions:
+        await push.send(subscription, payload)
+
+
 @api_router.get("/chat/conversations")
 async def list_admin_conversations(admin: dict = Depends(get_current_admin)):
     """Returns conversation list for all workers in the admin's business."""
@@ -2605,6 +2666,158 @@ async def meal_cleanup_loop() -> None:
     while True:
         await asyncio.sleep(24 * 60 * 60)  # 24 hours
         await cleanup_old_meal_data()
+
+
+async def check_and_send_meal_reminders() -> None:
+    """Check current time against meal window schedules and trigger automated student reminders & admin cutoff alerts."""
+    if not push.configured():
+        return
+
+    today = get_today_date()
+    current_time = now_tz().strftime("%H:%M")
+
+    try:
+        settings_list = await db.meal_settings.find({}, {"_id": 0}).to_list(100)
+        # If no meal settings found in db, query distinct businesses from workers
+        if not settings_list:
+            biz_ids = await db.workers.distinct("business_id")
+            settings_list = [{"business_id": bid, "windows": DEFAULT_MEAL_WINDOWS} for bid in biz_ids]
+
+        for menu_doc in settings_list:
+            biz_id = menu_doc.get("business_id")
+            if not biz_id:
+                continue
+
+            windows = menu_doc.get("windows", DEFAULT_MEAL_WINDOWS)
+            lunch_win = windows.get("lunch", {})
+            dinner_win = windows.get("dinner", {})
+
+            l_start = (lunch_win.get("start_time") or "08:00").strip() or "08:00"
+            l_end = (lunch_win.get("end_time") or "11:00").strip() or "11:00"
+            d_start = (dinner_win.get("start_time") or "16:00").strip() or "16:00"
+            d_end = (dinner_win.get("end_time") or "19:00").strip() or "19:00"
+
+            # Calculate 30 minutes before cutoff
+            try:
+                l_end_dt = datetime.strptime(l_end, "%H:%M")
+                l_30m = (l_end_dt - timedelta(minutes=30)).strftime("%H:%M")
+            except Exception:
+                l_30m = "10:30"
+
+            try:
+                d_end_dt = datetime.strptime(d_end, "%H:%M")
+                d_30m = (d_end_dt - timedelta(minutes=30)).strftime("%H:%M")
+            except Exception:
+                d_30m = "18:30"
+
+            events = [
+                # 1. Lunch Portal Start -> Student Reminder
+                {
+                    "event_type": "LUNCH_START",
+                    "trigger_time": l_start,
+                    "target": "STUDENT",
+                    "slot": "lunch",
+                    "title": "☀️ Lunch Menu is Open!",
+                    "body": f"Check today's lunch specials & confirm your Veg/Non-Veg or Room Delivery choice before {l_end}.",
+                    "tag": "lunch-start",
+                },
+                # 2. Lunch 30-min Before Cutoff -> Student Reminder
+                {
+                    "event_type": "LUNCH_30M_WARNING",
+                    "trigger_time": l_30m,
+                    "target": "STUDENT",
+                    "slot": "lunch",
+                    "title": "⏰ 30 Mins Left for Lunch!",
+                    "body": f"Lunch window closes at {l_end}. Please confirm your meal or cancel now if not eating.",
+                    "tag": "lunch-warning",
+                },
+                # 3. Lunch Cutoff Closed -> Admin PDF Roster Reminder
+                {
+                    "event_type": "LUNCH_CLOSED_ADMIN",
+                    "trigger_time": l_end,
+                    "target": "ADMIN",
+                    "slot": "lunch",
+                    "title": "📋 Lunch Portal Closed!",
+                    "body": f"Lunch cutoff ({l_end}) is locked. Final meal count is ready. Open dashboard to download today's Lunch PDF dispatch roster.",
+                    "tag": "lunch-closed-admin",
+                },
+                # 4. Dinner Portal Start -> Student Reminder
+                {
+                    "event_type": "DINNER_START",
+                    "trigger_time": d_start,
+                    "target": "STUDENT",
+                    "slot": "dinner",
+                    "title": "🌙 Dinner Menu is Open!",
+                    "body": f"Check today's dinner specials & confirm your Veg/Non-Veg or Room Delivery choice before {d_end}.",
+                    "tag": "dinner-start",
+                },
+                # 5. Dinner 30-min Before Cutoff -> Student Reminder
+                {
+                    "event_type": "DINNER_30M_WARNING",
+                    "trigger_time": d_30m,
+                    "target": "STUDENT",
+                    "slot": "dinner",
+                    "title": "⏰ 30 Mins Left for Dinner!",
+                    "body": f"Dinner window closes at {d_end}. Please confirm your meal or cancel now if not eating.",
+                    "tag": "dinner-warning",
+                },
+                # 6. Dinner Cutoff Closed -> Admin PDF Roster Reminder
+                {
+                    "event_type": "DINNER_CLOSED_ADMIN",
+                    "trigger_time": d_end,
+                    "target": "ADMIN",
+                    "slot": "dinner",
+                    "title": "📋 Dinner Portal Closed!",
+                    "body": f"Dinner cutoff ({d_end}) is locked. Final meal count is ready. Open dashboard to download today's Dinner PDF dispatch roster.",
+                    "tag": "dinner-closed-admin",
+                },
+            ]
+
+            for ev in events:
+                if current_time == ev["trigger_time"]:
+                    # Check if already triggered today
+                    log_exists = await db.meal_reminder_logs.find_one({
+                        "business_id": biz_id,
+                        "date": today,
+                        "event_type": ev["event_type"]
+                    })
+                    if not log_exists:
+                        await db.meal_reminder_logs.insert_one({
+                            "business_id": biz_id,
+                            "date": today,
+                            "event_type": ev["event_type"],
+                            "triggered_at": datetime.now(timezone.utc).isoformat(),
+                        })
+                        if ev["target"] == "ADMIN":
+                            asyncio.create_task(deliver_admin_push(
+                                business_id=biz_id,
+                                title=ev["title"],
+                                body=ev["body"],
+                                url="/admin",
+                                tag=ev["tag"]
+                            ))
+                        else:
+                            asyncio.create_task(deliver_student_broadcast_push(
+                                business_id=biz_id,
+                                meal_slot=ev["slot"],
+                                title=ev["title"],
+                                body=ev["body"],
+                                url="/worker",
+                                tag=ev["tag"]
+                            ))
+    except Exception:
+        logger.exception("Error executing meal reminder scheduler")
+
+
+async def meal_reminder_loop() -> None:
+    """Run meal reminder scheduler every 30 seconds to catch exact HH:MM minute triggers."""
+    while True:
+        try:
+            await check_and_send_meal_reminders()
+        except Exception:
+            logger.exception("Error in meal reminder loop")
+        await asyncio.sleep(30)
+
 
 
 @api_router.post("/chat/conversations/{conversation_id}/read")
@@ -3015,7 +3228,7 @@ async def start_student_vacation(user: dict = Depends(get_current_worker)):
                 upsert=True
             )
 
-    # Log Activity
+    # Log Activity & Push Notification to Admin
     await db.activity_logs.insert_one({
         "id": str(uuid.uuid4()),
         "business_id": biz_id,
@@ -3025,6 +3238,13 @@ async def start_student_vacation(user: dict = Depends(get_current_worker)):
         "title": f"🏖️ {worker.get('name', 'Student')} went on Vacation / Paused Meals ({pause_msg})",
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
+    asyncio.create_task(deliver_admin_push(
+        business_id=biz_id,
+        title="🏖️ Student On Vacation (Off)",
+        body=f"{worker.get('name', 'Student')} went on Vacation / Paused Meals ({pause_msg}).",
+        url="/admin",
+        tag="vacation-alert"
+    ))
 
     return {"ok": True, "message": pause_msg, "start_date": start_date, "leave_id": leave_id}
 
@@ -3060,6 +3280,13 @@ async def create_student_leave(body: dict = Body(...), user: dict = Depends(get_
         "title": f"🏖️ {(worker or {}).get('name', 'Student')} paused meals from {start_date}",
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
+    asyncio.create_task(deliver_admin_push(
+        business_id=biz_id,
+        title="🏖️ Student On Vacation (Off)",
+        body=f"{(worker or {}).get('name', 'Student')} paused meals from {start_date}.",
+        url="/admin",
+        tag="vacation-alert"
+    ))
 
     return {"ok": True, "leave": {k: v for k, v in doc.items() if k != "_id"}}
 
@@ -3123,7 +3350,7 @@ async def cancel_student_leave(leave_id: Optional[str] = None, user: dict = Depe
             {"business_id": biz_id, "worker_id": wid, "date": {"$gte": resume_date}, "leave_id": lid}
         )
 
-    # Log Activity
+    # Log Activity & Push Notification to Admin
     await db.activity_logs.insert_one({
         "id": str(uuid.uuid4()),
         "business_id": biz_id,
@@ -3133,6 +3360,13 @@ async def cancel_student_leave(leave_id: Optional[str] = None, user: dict = Depe
         "title": f"🏠 {(worker or {}).get('name', 'Student')} returned from vacation ({msg})",
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
+    asyncio.create_task(deliver_admin_push(
+        business_id=biz_id,
+        title="🏠 Student Resumed Meals (On)",
+        body=f"{(worker or {}).get('name', 'Student')} returned from Vacation ({msg}). Meals active.",
+        url="/admin",
+        tag="vacation-alert"
+    ))
 
     return {"ok": True, "message": msg, "resume_date": resume_date}
 
@@ -4521,7 +4755,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
-    global _voice_expiration_task, _meal_cleanup_task
+    global _voice_expiration_task, _meal_cleanup_task, _meal_reminder_task
     validate_environment()
     logger.info("Initializing database indexes and migrations...")
     try:
@@ -4666,9 +4900,11 @@ async def startup():
 
     _voice_expiration_task = asyncio.create_task(voice_expiration_loop())
     _meal_cleanup_task = asyncio.create_task(meal_cleanup_loop())
+    _meal_reminder_task = asyncio.create_task(meal_reminder_loop())
     # Run an immediate cleanup on startup to remove old data right away
     asyncio.create_task(cleanup_old_meal_data())
     logger.info("Meal data auto-cleanup scheduled: records older than 2 months will be deleted daily.")
+    logger.info("Automated meal window reminders & admin cutoff push notifications loop started.")
 
 
 @app.on_event("shutdown")
@@ -4683,6 +4919,12 @@ async def shutdown_db_client():
         _meal_cleanup_task.cancel()
         try:
             await _meal_cleanup_task
+        except asyncio.CancelledError:
+            pass
+    if _meal_reminder_task:
+        _meal_reminder_task.cancel()
+        try:
+            await _meal_reminder_task
         except asyncio.CancelledError:
             pass
     client.close()
