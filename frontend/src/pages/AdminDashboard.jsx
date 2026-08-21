@@ -416,6 +416,7 @@ function OverviewSection({ workers, admin, onNavigate }) {
           .badge-leave { color: #0d9488; font-weight: bold; }
           .badge-deliv { color: #b45309; font-weight: bold; }
           .badge-dine { color: #0f766e; font-weight: bold; }
+          .badge-pickup { color: #6d28d9; font-weight: bold; }
           @media print { body { padding: 0; } button { display: none; } }
         </style>
       </head>
@@ -426,6 +427,7 @@ function OverviewSection({ workers, admin, onNavigate }) {
         <div class="summary-box">
           <div class="summary-item">🍽️ Total Eating: ${activeSummary.total_eating || 0}</div>
           <div class="summary-item">🍽️ Dine-in (Mess): ${activeSummary.total_dine_in || 0}</div>
+          <div class="summary-item">🧳 Pickup: ${activeSummary.total_pickup || 0}</div>
           <div class="summary-item">🛵 Delivery (Room): ${activeSummary.total_delivery || 0}</div>
           <div class="summary-item">🥦 Pure Veg: ${activeSummary.standard_veg || 0}</div>
           <div class="summary-item">🍗 Non-Veg: ${activeSummary.standard_non_veg || 0}</div>
@@ -455,7 +457,7 @@ function OverviewSection({ workers, admin, onNavigate }) {
                 <td>${s.mobile || "—"}</td>
                 <td>${s.plan} (${s.meal_plan_type || "BOTH"})</td>
                 <td>
-                  ${s.is_cancelled || s.is_on_leave ? '—' : s.delivery_option === "DELIVERY" ? '<span class="badge-deliv">🛵 Delivery</span>' : '<span class="badge-dine">🍽️ Dine-in</span>'}
+                  ${s.is_cancelled || s.is_on_leave ? '—' : s.delivery_option === "DELIVERY" ? '<span class="badge-deliv">🛵 Delivery</span>' : s.delivery_option === "PICKUP" ? '<span class="badge-pickup">🧳 Pickup</span>' : '<span class="badge-dine">🍽️ Dine-in</span>'}
                 </td>
                 <td>
                   ${s.delivery_option === "DELIVERY" && !s.is_cancelled && !s.is_on_leave ? (s.delivery_address || "—") : "—"}
@@ -484,7 +486,7 @@ function OverviewSection({ workers, admin, onNavigate }) {
     csvContent += "Index,Student Name,Mobile,Subscription Plan,Meal Slot,Service Mode,Delivery Address,Diet / Dish Choice,Status,Date\n";
     students.forEach((s, idx) => {
       const statusText = s.is_on_leave ? "On Vacation" : s.is_cancelled ? "Cancelled" : "Eating";
-      const serviceMode = s.is_cancelled || s.is_on_leave ? "N/A" : s.delivery_option === "DELIVERY" ? "Delivery" : "Dine-in";
+      const serviceMode = s.is_cancelled || s.is_on_leave ? "N/A" : s.delivery_option === "DELIVERY" ? "Delivery" : s.delivery_option === "PICKUP" ? "Pickup" : "Dine-in";
       const deliveryAddress = s.delivery_option === "DELIVERY" && !s.is_cancelled && !s.is_on_leave ? (s.delivery_address || "") : "";
       const row = [
         idx + 1,
@@ -869,6 +871,17 @@ function OverviewSection({ workers, admin, onNavigate }) {
             <p className="text-[10px] text-emerald-700">Eating at Mess</p>
           </div>
 
+          {/* Pickup Plates */}
+          <div className="p-4 rounded-2xl bg-violet-50 border border-violet-200 space-y-1">
+            <span className="text-xs font-bold text-violet-900 flex items-center gap-1">
+              🧳 Pickup
+            </span>
+            <p className="font-display text-2xl font-extrabold text-violet-950">
+              {activeSummary.total_pickup || 0}
+            </p>
+            <p className="text-[10px] text-violet-700">Counter Pickup</p>
+          </div>
+
           {/* Delivery Plates */}
           <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-1">
             <span className="text-xs font-bold text-amber-900 flex items-center gap-1">
@@ -932,6 +945,7 @@ function OverviewSection({ workers, admin, onNavigate }) {
               {[
                 { key: "ALL", label: `All (${activeSlotData.students?.length || 0})` },
                 { key: "DINE_IN", label: `🍽️ Dine-in (${activeSummary.total_dine_in || 0})` },
+                { key: "PICKUP", label: `🧳 Pickup (${activeSummary.total_pickup || 0})` },
                 { key: "DELIVERY", label: `🛵 Delivery (${activeSummary.total_delivery || 0})` },
                 { key: "CANCELLED", label: `❌ Cancelled (${(activeSummary.cancelled_count || 0) + (activeSummary.on_leave_count || 0)})` },
               ].map((tab) => (
@@ -967,7 +981,9 @@ function OverviewSection({ workers, admin, onNavigate }) {
             const filtered = allStudents.filter((s) => {
               // Filter tab
               if (rosterFilter === "DINE_IN") {
-                if (s.is_cancelled || s.is_on_leave || s.delivery_option === "DELIVERY") return false;
+                if (s.is_cancelled || s.is_on_leave || s.delivery_option === "DELIVERY" || s.delivery_option === "PICKUP") return false;
+              } else if (rosterFilter === "PICKUP") {
+                if (s.is_cancelled || s.is_on_leave || s.delivery_option !== "PICKUP") return false;
               } else if (rosterFilter === "DELIVERY") {
                 if (s.is_cancelled || s.is_on_leave || s.delivery_option !== "DELIVERY") return false;
               } else if (rosterFilter === "CANCELLED") {
@@ -1019,6 +1035,10 @@ function OverviewSection({ workers, admin, onNavigate }) {
                           ) : s.delivery_option === "DELIVERY" ? (
                             <span className="inline-flex items-center gap-1 font-bold text-amber-900 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md text-[10px]">
                               🛵 Delivery
+                            </span>
+                          ) : s.delivery_option === "PICKUP" ? (
+                            <span className="inline-flex items-center gap-1 font-bold text-violet-900 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded-md text-[10px]">
+                              🧳 Pickup
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 font-bold text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-md text-[10px]">

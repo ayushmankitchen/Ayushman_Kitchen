@@ -258,30 +258,42 @@ function MealSlotCard({
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
                   disabled={!windowOpen || saving}
                   onClick={() => onServiceModeChange(slotKey, "DINE_IN")}
-                  className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                  className={`py-2 px-2 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1 ${
                     effectiveDeliveryOption === "DINE_IN"
                       ? "bg-teal-800 border-teal-800 text-white shadow-xs"
                       : "bg-white border-stone-200 text-slate-700 hover:bg-stone-100"
                   } ${!windowOpen ? "opacity-60 cursor-not-allowed" : ""}`}
                 >
-                  🍽️ Dine-in (Mess)
+                  🍽️ Dine-in
+                </button>
+                <button
+                  type="button"
+                  disabled={!windowOpen || saving}
+                  onClick={() => onServiceModeChange(slotKey, "PICKUP")}
+                  className={`py-2 px-2 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                    effectiveDeliveryOption === "PICKUP"
+                      ? "bg-violet-700 border-violet-700 text-white shadow-xs"
+                      : "bg-white border-stone-200 text-slate-700 hover:bg-stone-100"
+                  } ${!windowOpen ? "opacity-60 cursor-not-allowed" : ""}`}
+                >
+                  🧳 Pickup
                 </button>
                 <button
                   type="button"
                   disabled={!windowOpen || saving}
                   onClick={() => onServiceModeChange(slotKey, "DELIVERY")}
-                  className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                  className={`py-2 px-2 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1 ${
                     effectiveDeliveryOption === "DELIVERY"
                       ? "bg-amber-600 border-amber-600 text-white shadow-xs"
                       : "bg-white border-stone-200 text-slate-700 hover:bg-stone-100"
                   } ${!windowOpen ? "opacity-60 cursor-not-allowed" : ""}`}
                 >
-                  🛵 Delivery (Room)
+                  🛵 Delivery
                 </button>
               </div>
 
@@ -659,6 +671,8 @@ export default function WorkerDashboard() {
       toast.success(
         newMode === "DELIVERY"
           ? `🛵 ${slotKey.toUpperCase()} set to Room Delivery!`
+          : newMode === "PICKUP"
+          ? `🧳 ${slotKey.toUpperCase()} set to Pickup!`
           : `🍽️ ${slotKey.toUpperCase()} set to Mess Dine-in!`
       );
       await Promise.all([loadTodayMeal(), loadMealStats()]);

@@ -470,7 +470,7 @@ class WorkerCreate(BaseModel):
     email: Optional[str] = ""
     status: str = "ACTIVE"
     diet_preference: Optional[str] = "VEG"
-    delivery_preference: Optional[str] = "DINE_IN"  # DINE_IN | DELIVERY
+    delivery_preference: Optional[str] = "DINE_IN"  # DINE_IN | PICKUP | DELIVERY
     delivery_address: Optional[str] = ""            # Hostel / Room / Landmark
     delivery_notes: Optional[str] = ""              # Delivery instructions
     portal_enabled: bool = True
@@ -518,7 +518,7 @@ class WorkerCreate(BaseModel):
     @classmethod
     def valid_delivery_preference(cls, value: Optional[str]) -> str:
         val = (value or "DINE_IN").strip().upper()
-        if val not in {"DINE_IN", "DELIVERY"}:
+        if val not in {"DINE_IN", "DELIVERY", "PICKUP"}:
             return "DINE_IN"
         return val
 
@@ -580,7 +580,7 @@ class WorkerUpdate(BaseModel):
     def valid_delivery_preference(cls, value: Optional[str]) -> Optional[str]:
         if value:
             val = value.strip().upper()
-            if val not in {"DINE_IN", "DELIVERY"}:
+            if val not in {"DINE_IN", "DELIVERY", "PICKUP"}:
                 return "DINE_IN"
             return val
         return value
@@ -4302,6 +4302,7 @@ async def get_meal_headcount(
         total_eating = 0
         total_dine_in = 0
         total_delivery = 0
+        total_pickup = 0
         premium_counts = {}
         student_list = []
 
@@ -4325,14 +4326,14 @@ async def get_meal_headcount(
             is_cancelled = False
             effective_choice = ""
             choice_detail = ""
-            effective_delivery = default_deliv_pref if default_deliv_pref in {"DINE_IN", "DELIVERY"} else "DINE_IN"
+            effective_delivery = default_deliv_pref if default_deliv_pref in {"DINE_IN", "DELIVERY", "PICKUP"} else "DINE_IN"
             delivery_address = default_deliv_addr
             delivery_notes = default_deliv_notes
             is_customized = bool(sel)
 
             if sel and sel.get("delivery_option"):
                 opt = sel.get("delivery_option", "").strip().upper()
-                if opt in {"DINE_IN", "DELIVERY"}:
+                if opt in {"DINE_IN", "DELIVERY", "PICKUP"}:
                     effective_delivery = opt
                 if sel.get("delivery_address"):
                     delivery_address = sel.get("delivery_address")
@@ -4361,6 +4362,8 @@ async def get_meal_headcount(
                 total_eating += 1
                 if effective_delivery == "DELIVERY":
                     total_delivery += 1
+                elif effective_delivery == "PICKUP":
+                    total_pickup += 1
                 else:
                     total_dine_in += 1
 
@@ -4418,6 +4421,7 @@ async def get_meal_headcount(
                 "total_eating": total_eating,
                 "total_dine_in": total_dine_in,
                 "total_delivery": total_delivery,
+                "total_pickup": total_pickup,
                 "cancelled_count": total_cancelled,
                 "on_leave_count": total_on_leave,
                 "standard_veg": total_veg,
@@ -4638,7 +4642,7 @@ async def save_student_meal_selection(
 
     # Delivery fields
     delivery_option = (body.get("delivery_option") or worker.get("delivery_preference") or "DINE_IN").strip().upper()
-    if delivery_option not in {"DINE_IN", "DELIVERY"}:
+    if delivery_option not in {"DINE_IN", "DELIVERY", "PICKUP"}:
         delivery_option = "DINE_IN"
     delivery_address = (body.get("delivery_address") if body.get("delivery_address") is not None else worker.get("delivery_address", "")).strip()
     delivery_notes = (body.get("delivery_notes") if body.get("delivery_notes") is not None else worker.get("delivery_notes", "")).strip()
@@ -4725,7 +4729,7 @@ async def save_student_meal_selection(
 
     # Log Activity
     sname = worker.get("name", "Student")
-    mode_text = " (🛵 Delivery)" if delivery_option == "DELIVERY" else " (🍽️ Dine-in)"
+    mode_text = " (🛵 Delivery)" if delivery_option == "DELIVERY" else " (🧳 Pickup)" if delivery_option == "PICKUP" else " (🍽️ Dine-in)"
     if action == "CANCEL":
         act_title = f"❌ {sname} cancelled {slot_key.upper()} ({target_date})"
         act_type = "MEAL_CANCELLED"

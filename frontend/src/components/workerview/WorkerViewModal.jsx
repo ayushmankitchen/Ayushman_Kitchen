@@ -414,7 +414,9 @@ export default function WorkerViewModal({ workerId, open, onClose }) {
 
   if (!open) return null;
 
-  const isDelivery = (data?.worker?.delivery_preference || "").toUpperCase() === "DELIVERY";
+  const deliveryPref = (data?.worker?.delivery_preference || "").toUpperCase();
+  const isDelivery = deliveryPref === "DELIVERY";
+  const isPickup = deliveryPref === "PICKUP";
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -482,7 +484,7 @@ export default function WorkerViewModal({ workerId, open, onClose }) {
               </span>
               <span className="bg-white/10 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
                 {isDelivery ? <Bike className="h-3.5 w-3.5 text-amber-300" /> : <Utensils className="h-3.5 w-3.5 text-amber-300" />}
-                Mode: <strong>{isDelivery ? "🛵 Delivery" : "🍽️ Dine-in"}</strong>
+                Mode: <strong>{isDelivery ? "🛵 Delivery" : isPickup ? "🧳 Pickup" : "🍽️ Dine-in"}</strong>
               </span>
               {isDelivery && data.worker.delivery_address && (
                 <span className="bg-white/10 px-3 py-1.5 rounded-xl flex items-center gap-1.5 max-w-[280px] truncate" title={data.worker.delivery_address}>

@@ -27,6 +27,16 @@ def test_worker_create_delivery_fields():
     assert w2.delivery_address == "Hostel B, Room 204"
     assert w2.delivery_notes == "Leave with warden"
 
+    # Custom PICKUP
+    w3 = WorkerCreate(
+        name="Student Three",
+        work_type="Standard",
+        joining_date="2026-08-19",
+        salary=0.0,
+        delivery_preference="PICKUP"
+    )
+    assert w3.delivery_preference == "PICKUP"
+
 def test_worker_update_delivery_fields():
     up = WorkerUpdate(
         delivery_preference="DELIVERY",
@@ -36,6 +46,11 @@ def test_worker_update_delivery_fields():
     assert up.delivery_preference == "DELIVERY"
     assert up.delivery_address == "Girls Hostel 1, Room 102"
     assert up.delivery_notes == "Call before delivery"
+
+    up_pickup = WorkerUpdate(
+        delivery_preference="PICKUP"
+    )
+    assert up_pickup.delivery_preference == "PICKUP"
 
 def test_cutoff_window_check():
     windows = {
