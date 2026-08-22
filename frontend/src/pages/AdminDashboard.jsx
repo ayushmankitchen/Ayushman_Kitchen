@@ -56,14 +56,19 @@ const attStyle = {
   "Half Day": "bg-amber-50 text-amber-800 border-amber-300 font-bold",
 };
 
+const VALID_VIEWS = ["overview", "workers", "menu", "messages", "settings"];
+
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const { admin, loading, logout, setAdmin } = useAdminAuth();
   const [view, setView] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("tab")) return params.get("tab");
+    const tab = params.get("tab");
+    if (tab && VALID_VIEWS.includes(tab)) return tab;
     if (params.has("conversation")) return "messages";
-    return localStorage.getItem("admin_active_tab") || "overview";
+    const stored = localStorage.getItem("admin_active_tab");
+    if (stored && VALID_VIEWS.includes(stored)) return stored;
+    return "overview";
   });
 
   useEffect(() => {
@@ -129,12 +134,10 @@ export default function AdminDashboard() {
     if (!admin) return undefined;
     const interval = setInterval(() => {
       loadUnreadMessages();
-      loadOverviewData();
     }, 4000);
 
     const unsubscribe = onPushNotification((data) => {
       loadUnreadMessages();
-      loadOverviewData();
       if (data?.title) {
         toast.info(data.title, { description: data.body });
       }
@@ -142,9 +145,11 @@ export default function AdminDashboard() {
 
     return () => {
       clearInterval(interval);
-      unsubscribe();
+      if (typeof unsubscribe === "function") {
+        unsubscribe();
+      }
     };
-  }, [admin, loadUnreadMessages, loadOverviewData]);
+  }, [admin, loadUnreadMessages]);
 
   const doLogout = async () => {
     await logout();
