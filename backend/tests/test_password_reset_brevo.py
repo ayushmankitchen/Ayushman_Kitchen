@@ -200,55 +200,52 @@ async def test_email_service_fallback(monkeypatch):
     from backend.services.email import BrevoEmailService
     service = BrevoEmailService()
 
-    # When EMAIL_USER / EMAIL_PASSWORD is empty, it simulates and returns True gracefully without crashing
-    monkeypatch.setenv("EMAIL_USER", "")
-    monkeypatch.setenv("EMAIL_PASSWORD", "")
+    # When BREVO_API_KEY is empty, it simulates and returns True gracefully without crashing
+    monkeypatch.setenv("BREVO_API_KEY", "")
     res = await service.send_password_reset_email("test@example.com", "Tester", "http://localhost:3000/reset-password?token=abc")
     assert res is True
-    assert service.host == "smtp-relay.brevo.com"
-    assert service.port == 587
     assert service.sender_email == "ayushmankitchen@gmail.com"
     assert service.sender_name == "Ayushman Kitchen"
 
 
 @pytest.mark.asyncio
-async def test_smtp_send_mocked(monkeypatch):
+async def test_brevo_https_api_responses(monkeypatch):
+    import httpx
     from backend.services.email import BrevoEmailService
-    import backend.services.email as email_mod
-
-    sent_calls = []
-
-    def mock_smtp_sync(host, port, user, password, from_name, from_email, to_name, to_email, subject, reset_link, timeout):
-        sent_calls.append({
-            "host": host,
-            "port": port,
-            "user": user,
-            "from_name": from_name,
-            "from_email": from_email,
-            "to_name": to_name,
-            "to_email": to_email,
-            "subject": subject,
-            "reset_link": reset_link,
-        })
-        return True
-
-    monkeypatch.setattr(email_mod, "_send_smtp_sync", mock_smtp_sync)
-    monkeypatch.setenv("EMAIL_USER", "mock_brevo_user")
-    monkeypatch.setenv("EMAIL_PASSWORD", "mock_brevo_smtp_key")
 
     service = BrevoEmailService()
-    success = await service.send_password_reset_email(
-        "recipient@example.com",
-        "Test Student",
-        "http://localhost:3000/reset-password?token=test_smtp_token"
-    )
-    assert success is True
-    assert len(sent_calls) == 1
-    assert sent_calls[0]["host"] == "smtp-relay.brevo.com"
-    assert sent_calls[0]["port"] == 587
-    assert sent_calls[0]["user"] == "mock_brevo_user"
-    assert sent_calls[0]["to_email"] == "recipient@example.com"
-    assert sent_calls[0]["from_email"] == "ayushmankitchen@gmail.com"
-    assert "token=test_smtp_token" in sent_calls[0]["reset_link"]
+    monkeypatch.setenv("BREVO_API_KEY", "xkeysib-mock-key-for-testing-12345")
+
+    # 1. Test 201 Created (Success)
+    async def mock_post_201(self, url, **kwargs):
+        assert "api.brevo.com/v3/smtp/email" in url
+        assert kwargs["headers"]["api-key"] == "xkeysib-mock-key-for-testing-12345"
+        payload = kwargs["json"]
+        assert payload["sender"]["email"] == "ayushmankitchen@gmail.com"
+        assert payload["sender"]["name"] == "Ayushman Kitchen"
+        assert "token=abc" in payload["htmlContent"]
+        assert "token=abc" in payload["textContent"]
+        return httpx.Response(201, json={"messageId": "<202608221234.test@smtp-relay.brevo.com>"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_201)
+    res_201 = await service.send_password_reset_email("user@example.com", "Test User", "http://localhost:3000/reset-password?token=abc")
+    assert res_201 is True
+
+    # 2. Test 401 Unauthorized (Invalid Key)
+    async def mock_post_401(self, url, **kwargs):
+        return httpx.Response(401, json={"message": "Key not found", "code": "unauthorized"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_401)
+    res_401 = await service.send_password_reset_email("user@example.com", "Test User", "http://localhost:3000/reset-password?token=abc")
+    assert res_401 is False
+
+    # 3. Test 403 Forbidden (Account Not Activated)
+    async def mock_post_403(self, url, **kwargs):
+        return httpx.Response(403, json={"message": "Unable to send email. Your SMTP account is not yet activated.", "code": "permission_denied"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_403)
+    res_403 = await service.send_password_reset_email("user@example.com", "Test User", "http://localhost:3000/reset-password?token=abc")
+    assert res_403 is False
+
 
 
