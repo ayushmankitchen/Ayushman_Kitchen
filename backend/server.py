@@ -25,7 +25,8 @@ import hashlib
 import re
 import asyncio
 from collections import defaultdict, deque
-from urllib.parse import urlparse
+import urllib.parse
+from urllib.parse import urlparse, quote_plus
 
 from backend.services.timezone import (
     get_today_date,
@@ -352,7 +353,11 @@ class ForgotPasswordRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     token: str = Field(min_length=10, max_length=256)
-    new_password: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(min_length=6, max_length=128)
+
+
+ForgotPasswordIn = ForgotPasswordRequest
+ResetPasswordIn = ResetPasswordRequest
 
 
 class AdminChangePassword(BaseModel):
@@ -866,6 +871,142 @@ async def admin_login(body: AdminLogin, response: Response, request: Request):
     }
 
 
+# ---------------- Unified Auth & Password Reset Routes ----------------
+@api_router.post("/auth/forgot-password")
+async def auth_forgot_password(body: ForgotPasswordRequest, request: Request):
+    """Unified forgot-password endpoint for both admins and students/workers."""
+    rate_limit(request, "auth-forgot-password", 10, 60)
+    email = body.email.strip().lower()
+
+    # Search admins first
+    admin = await db.admins.find_one({"email": email, "disabled_at": {"$in": [None, ""]}})
+    worker = None
+    if not admin:
+        worker = await db.workers.find_one({
+            "email": email,
+            "archived_at": {"$in": [None, ""]},
+            "deleted_at": {"$in": [None, ""]},
+        })
+
+    user = admin or worker
+    if user and user.get("is_active") is not False and user.get("status", "ACTIVE") != "INACTIVE":
+        is_admin = bool(admin)
+        user_id = user["id"]
+        role = "admin" if is_admin else "student"
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+
+        # Invalidate existing unused tokens for this user
+        await db.password_reset_tokens.update_many(
+            {"$or": [{"user_id": user_id}, {"admin_id": user_id}, {"worker_id": user_id}], "used_at": None},
+            {"$set": {"used_at": "invalidated_by_new_request"}},
+        )
+
+        await db.password_reset_tokens.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "admin_id": user_id if is_admin else None,
+            "worker_id": user_id if not is_admin else None,
+            "role": role,
+            "token_type": "password_reset",
+            "token_hash": token_hash,
+            "expires_at": expires_at,
+            "used_at": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+        reset_base = os.environ.get("PASSWORD_RESET_URL", "http://localhost:3000/reset-password").strip()
+        encoded_token = urllib.parse.quote_plus(raw_token)
+        reset_link = f"{reset_base}?token={encoded_token}"
+        if not is_admin:
+            reset_link += "&role=student"
+
+        user_name = user.get("name") or ("Admin" if is_admin else "Student")
+        await email_service.send_password_reset_email(email, user_name, reset_link)
+
+    # Always return safe generic response to prevent user enumeration
+    return {"message": "If an account exists for this email, a password reset link has been sent."}
+
+
+@api_router.post("/auth/reset-password")
+async def auth_reset_password(body: ResetPasswordRequest, request: Request):
+    """Unified password reset endpoint validating secure token and updating user password."""
+    rate_limit(request, "auth-reset-password", 10, 60)
+    token_str = body.token.strip()
+    if not token_str:
+        raise HTTPException(status_code=400, detail="Reset token is required")
+
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters long")
+
+    token_hash = hashlib.sha256(token_str.encode("utf-8")).hexdigest()
+    reset_doc = await db.password_reset_tokens.find_one({"token_hash": token_hash, "used_at": None})
+    if not reset_doc:
+        raise HTTPException(status_code=400, detail="Invalid or expired password reset link")
+
+    if reset_doc.get("token_type") and reset_doc.get("token_type") != "password_reset":
+        raise HTTPException(status_code=400, detail="Invalid reset token type")
+
+    expires_at = reset_doc.get("expires_at")
+    if isinstance(expires_at, str):
+        try:
+            expires_at = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except ValueError:
+            expires_at = None
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if not expires_at or expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Password reset link has expired. Please request a new one.")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    new_hash = hash_password(body.new_password)
+
+    admin_id = reset_doc.get("admin_id")
+    worker_id = reset_doc.get("worker_id")
+    user_id = reset_doc.get("user_id")
+
+    if admin_id or reset_doc.get("role") == "admin":
+        target_id = admin_id or user_id
+        await db.admins.update_one(
+            {"id": target_id},
+            {"$set": {"password_hash": new_hash, "updated_at": now_iso, "password_changed_at": now_iso}},
+        )
+    elif worker_id or reset_doc.get("role") in {"student", "worker"}:
+        target_id = worker_id or user_id
+        await db.workers.update_one(
+            {"id": target_id},
+            {"$set": {"password_hash": new_hash, "updated_at": now_iso}},
+        )
+        await db.students.update_one(
+            {"id": target_id},
+            {"$set": {"password_hash": new_hash, "updated_at": now_iso}},
+        )
+        await db.worker_sessions.delete_many({"worker_id": target_id})
+    elif user_id:
+        if await db.admins.find_one({"id": user_id}):
+            await db.admins.update_one(
+                {"id": user_id},
+                {"$set": {"password_hash": new_hash, "updated_at": now_iso, "password_changed_at": now_iso}},
+            )
+        else:
+            await db.workers.update_one(
+                {"id": user_id},
+                {"$set": {"password_hash": new_hash, "updated_at": now_iso}},
+            )
+            await db.students.update_one(
+                {"id": user_id},
+                {"$set": {"password_hash": new_hash, "updated_at": now_iso}},
+            )
+            await db.worker_sessions.delete_many({"worker_id": user_id})
+
+    await db.password_reset_tokens.update_one(
+        {"id": reset_doc["id"]},
+        {"$set": {"used_at": now_iso}},
+    )
+    return {"message": "Password reset successfully."}
+
+
 @api_router.post("/admin/forgot-password")
 async def admin_forgot_password(body: ForgotPasswordRequest, request: Request):
     rate_limit(request, "admin-forgot-password", 10, 60)
@@ -880,12 +1021,15 @@ async def admin_forgot_password(body: ForgotPasswordRequest, request: Request):
         # Invalidate existing unused tokens for this admin
         await db.password_reset_tokens.update_many(
             {"admin_id": admin["id"], "used_at": None},
-            {"$set": {"used_at": "invalidated_by_new_request"}}
+            {"$set": {"used_at": "invalidated_by_new_request"}},
         )
 
         await db.password_reset_tokens.insert_one({
             "id": str(uuid.uuid4()),
+            "user_id": admin["id"],
             "admin_id": admin["id"],
+            "role": "admin",
+            "token_type": "password_reset",
             "token_hash": token_hash,
             "expires_at": expires_at,
             "used_at": None,
@@ -893,7 +1037,8 @@ async def admin_forgot_password(body: ForgotPasswordRequest, request: Request):
         })
 
         reset_base = os.environ.get("PASSWORD_RESET_URL", "http://localhost:3000/reset-password").strip()
-        reset_link = f"{reset_base}?token={raw_token}"
+        encoded_token = urllib.parse.quote_plus(raw_token)
+        reset_link = f"{reset_base}?token={encoded_token}"
         await email_service.send_password_reset_email(email, admin.get("name", "Admin"), reset_link)
 
     # Always return safe generic response
@@ -903,15 +1048,25 @@ async def admin_forgot_password(body: ForgotPasswordRequest, request: Request):
 @api_router.post("/admin/reset-password")
 async def admin_reset_password(body: ResetPasswordRequest, request: Request):
     rate_limit(request, "admin-reset-password", 10, 60)
-    token_hash = hashlib.sha256(body.token.strip().encode("utf-8")).hexdigest()
+    token_str = body.token.strip()
+    if not token_str:
+        raise HTTPException(status_code=400, detail="Reset token is required")
+
+    token_hash = hashlib.sha256(token_str.encode("utf-8")).hexdigest()
 
     reset_doc = await db.password_reset_tokens.find_one({"token_hash": token_hash, "used_at": None})
     if not reset_doc:
         raise HTTPException(status_code=400, detail="Invalid or expired password reset link")
 
+    if reset_doc.get("token_type") and reset_doc.get("token_type") != "password_reset":
+        raise HTTPException(status_code=400, detail="Invalid reset token type")
+
     expires_at = reset_doc.get("expires_at")
     if isinstance(expires_at, str):
-        expires_at = datetime.fromisoformat(expires_at)
+        try:
+            expires_at = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except ValueError:
+            expires_at = None
     if expires_at and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     if not expires_at or expires_at < datetime.now(timezone.utc):
@@ -919,14 +1074,16 @@ async def admin_reset_password(body: ResetPasswordRequest, request: Request):
 
     now_iso = datetime.now(timezone.utc).isoformat()
     new_hash = hash_password(body.new_password)
+    target_admin_id = reset_doc.get("admin_id") or reset_doc.get("user_id")
 
-    await db.admins.update_one(
-        {"id": reset_doc["admin_id"]},
-        {"$set": {"password_hash": new_hash, "updated_at": now_iso, "password_changed_at": now_iso}}
-    )
+    if target_admin_id:
+        await db.admins.update_one(
+            {"id": target_admin_id},
+            {"$set": {"password_hash": new_hash, "updated_at": now_iso, "password_changed_at": now_iso}},
+        )
     await db.password_reset_tokens.update_one(
         {"id": reset_doc["id"]},
-        {"$set": {"used_at": now_iso}}
+        {"$set": {"used_at": now_iso}},
     )
 
     return {"message": "Password successfully reset. You can now login with your new password."}
@@ -1184,13 +1341,16 @@ async def worker_forgot_password(body: WorkerForgotPasswordRequest, request: Req
 
     # Invalidate existing unused tokens for this student
     await db.password_reset_tokens.update_many(
-        {"worker_id": student["id"], "used_at": None},
-        {"$set": {"used_at": "invalidated_by_new_request"}}
+        {"$or": [{"worker_id": student["id"]}, {"user_id": student["id"]}], "used_at": None},
+        {"$set": {"used_at": "invalidated_by_new_request"}},
     )
 
     await db.password_reset_tokens.insert_one({
         "id": str(uuid.uuid4()),
+        "user_id": student["id"],
         "worker_id": student["id"],
+        "role": "student",
+        "token_type": "password_reset",
         "token_hash": token_hash,
         "expires_at": expires_at,
         "used_at": None,
@@ -1198,7 +1358,8 @@ async def worker_forgot_password(body: WorkerForgotPasswordRequest, request: Req
     })
 
     reset_base = os.environ.get("PASSWORD_RESET_URL", "http://localhost:3000/reset-password").strip()
-    reset_link = f"{reset_base}?token={raw_token}&role=student"
+    encoded_token = urllib.parse.quote_plus(raw_token)
+    reset_link = f"{reset_base}?token={encoded_token}&role=student"
     await email_service.send_password_reset_email(student_email, student.get("name", "Student"), reset_link)
 
     masked_email = f"{student_email[:3]}***@{student_email.split('@')[-1]}"
@@ -1213,30 +1374,46 @@ async def worker_forgot_password(body: WorkerForgotPasswordRequest, request: Req
 @api_router.post("/worker/reset-password")
 async def worker_reset_password(body: ResetPasswordRequest, request: Request):
     rate_limit(request, "worker-reset-password", 10, 60)
-    token_hash = hashlib.sha256(body.token.strip().encode("utf-8")).hexdigest()
+    token_str = body.token.strip()
+    if not token_str:
+        raise HTTPException(status_code=400, detail="Reset token is required")
+
+    token_hash = hashlib.sha256(token_str.encode("utf-8")).hexdigest()
 
     reset_doc = await db.password_reset_tokens.find_one({"token_hash": token_hash, "used_at": None})
-    if not reset_doc or not reset_doc.get("worker_id"):
+    target_worker_id = reset_doc.get("worker_id") or reset_doc.get("user_id") if reset_doc else None
+    if not reset_doc or not target_worker_id:
         raise HTTPException(status_code=400, detail="Invalid or expired password reset link")
 
+    if reset_doc.get("token_type") and reset_doc.get("token_type") != "password_reset":
+        raise HTTPException(status_code=400, detail="Invalid reset token type")
+
     expires_at = reset_doc.get("expires_at")
-    if expires_at and datetime.fromisoformat(expires_at.replace("Z", "+00:00")) < datetime.now(timezone.utc):
+    if isinstance(expires_at, str):
+        try:
+            expires_at = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except ValueError:
+            expires_at = None
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if not expires_at or expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Password reset link has expired (valid for 30 mins)")
 
     now_iso = datetime.now(timezone.utc).isoformat()
+    new_hash = hash_password(body.new_password)
     await db.workers.update_one(
-        {"id": reset_doc["worker_id"]},
-        {"$set": {"password_hash": hash_password(body.new_password), "updated_at": now_iso}}
+        {"id": target_worker_id},
+        {"$set": {"password_hash": new_hash, "updated_at": now_iso}}
     )
     await db.students.update_one(
-        {"id": reset_doc["worker_id"]},
-        {"$set": {"password_hash": hash_password(body.new_password), "updated_at": now_iso}}
+        {"id": target_worker_id},
+        {"$set": {"password_hash": new_hash, "updated_at": now_iso}}
     )
     await db.password_reset_tokens.update_one(
         {"id": reset_doc["id"]},
         {"$set": {"used_at": now_iso}}
     )
-    await db.worker_sessions.delete_many({"worker_id": reset_doc["worker_id"]})
+    await db.worker_sessions.delete_many({"worker_id": target_worker_id})
     return {"message": "Student password reset successfully. You can now login with your new password."}
 
 
@@ -4760,7 +4937,8 @@ async def production_security(request: Request, call_next):
     try:
         if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in {
             "/api/admin/signup", "/api/admin/login", "/api/admin/forgot-password",
-            "/api/admin/reset-password", "/api/worker/login"
+            "/api/admin/reset-password", "/api/worker/login", "/api/worker/forgot-password",
+            "/api/worker/reset-password", "/api/auth/forgot-password", "/api/auth/reset-password"
         } and (request.cookies.get("access_token") or request.cookies.get("session_token")):
             cookie_token = request.cookies.get("csrf_token")
             header_token = request.headers.get("X-CSRF-Token")

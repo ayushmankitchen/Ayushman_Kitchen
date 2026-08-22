@@ -12,35 +12,46 @@ BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 
 
 class BrevoEmailService:
-    """Delivers transactional emails (e.g., password reset) via Brevo API."""
+    """Delivers transactional emails (e.g., password reset) via Brevo REST API."""
 
-    def __init__(self) -> None:
-        self.api_key = os.getenv("BREVO_API_KEY", "").strip()
-        self.sender_email = os.getenv("BREVO_SENDER_EMAIL", "noreply@workforce.app").strip()
-        self.sender_name = os.getenv("BREVO_SENDER_NAME", "WorkForce").strip()
+    @property
+    def api_key(self) -> str:
+        return os.getenv("BREVO_API_KEY", "").strip()
+
+    @property
+    def sender_email(self) -> str:
+        return os.getenv("BREVO_SENDER_EMAIL", "ayushmankitchen@gmail.com").strip()
+
+    @property
+    def sender_name(self) -> str:
+        return os.getenv("BREVO_SENDER_NAME", "Ayushman Kitchen").strip()
 
     async def send_password_reset_email(self, recipient_email: str, recipient_name: str, reset_link: str) -> bool:
         """Sends a password reset email with the secure one-time link."""
-        if not self.api_key:
-            logger.info(
-                "BREVO_API_KEY is not configured. Reset email simulated for %s with link: %s",
+        api_key = self.api_key
+        sender_email = self.sender_email
+        sender_name = self.sender_name
+
+        if not api_key:
+            logger.warning(
+                "BREVO_API_KEY is not configured. Reset email simulated for %s",
                 recipient_email,
-                reset_link,
             )
             return True
 
+        greeting_name = recipient_name.strip() if recipient_name and recipient_name.strip() else "Ayushman Kitchen User"
         payload: dict[str, Any] = {
             "sender": {
-                "name": self.sender_name,
-                "email": self.sender_email,
+                "name": sender_name,
+                "email": sender_email,
             },
             "to": [
                 {
                     "email": recipient_email,
-                    "name": recipient_name or "Ayushman Kitchen Admin",
+                    "name": greeting_name,
                 }
             ],
-            "subject": "Reset your Ayushman Kitchen Admin Password",
+            "subject": "Reset your Ayushman Kitchen Password",
             "htmlContent": f"""<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
@@ -50,9 +61,9 @@ class BrevoEmailService:
     <p style="color: #99f6e4; margin: 6px 0 0 0; font-size: 13px; font-weight: 600;">Student Meal & Mess Management Portal</p>
   </div>
   <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 28px; margin-top: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-    <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">Admin Password Reset Request</h2>
-    <p>Hello {recipient_name or 'Admin'},</p>
-    <p>We received a request to reset the password for your Ayushman Kitchen Admin account. Click the button below to set a new password:</p>
+    <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">Password Reset Request</h2>
+    <p>Hello {greeting_name},</p>
+    <p>We received a request to reset the password for your Ayushman Kitchen account. Click the button below to set a new password:</p>
     <div style="text-align: center; margin: 28px 0;">
       <a href="{reset_link}" style="background-color: #102f2c; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 10px; font-weight: bold; font-size: 15px; display: inline-block;">Reset Password</a>
     </div>
@@ -69,7 +80,7 @@ class BrevoEmailService:
                 response = await client.post(
                     BREVO_API_URL,
                     headers={
-                        "api-key": self.api_key,
+                        "api-key": api_key,
                         "Content-Type": "application/json",
                         "Accept": "application/json",
                     },
@@ -79,10 +90,10 @@ class BrevoEmailService:
                     logger.info("Password reset email successfully sent via Brevo to %s", recipient_email)
                     return True
                 else:
-                    logger.error("Brevo email failed with status %s: %s", response.status_code, response.text)
+                    logger.error("Brevo email request returned status %s: %s", response.status_code, response.text)
                     return False
         except Exception as exc:
-            logger.exception("Failed to send password reset email via Brevo: %s", exc)
+            logger.exception("Failed to send password reset email via Brevo to %s: %s", recipient_email, exc)
             return False
 
 

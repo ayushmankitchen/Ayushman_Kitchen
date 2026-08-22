@@ -51,14 +51,10 @@ export default function ResetPassword() {
 
     setLoading(true);
     try {
-      if (isStudent) {
-        await axios.post(`${API}/worker/reset-password`, {
-          token,
-          new_password: newPassword,
-        });
-      } else {
-        await adminResetPassword(token, newPassword);
-      }
+      await axios.post(`${API}/auth/reset-password`, {
+        token,
+        new_password: newPassword,
+      });
       setSuccess(true);
       toast.success("Password reset successful!");
     } catch (error) {
