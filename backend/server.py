@@ -2041,6 +2041,18 @@ async def create_payment(body: PaymentCreate, admin: dict = Depends(get_current_
     
     await db.payments.insert_one(doc)
     doc.pop("_id", None)
+
+    amt = doc.get("amount", 0)
+    wname = worker.get("name", "Student")
+    asyncio.create_task(deliver_student_push(
+        business_id=biz_id,
+        worker_id=body.worker_id,
+        title="💳 Payment Added - Ayushman Kitchen",
+        body=f"Hello {wname}, payment of ₹{amt:,.0f} has been recorded for your mess account.",
+        url="/student",
+        tag=f"payment-{doc['id']}"
+    ))
+
     return doc
 
 
@@ -2564,6 +2576,26 @@ async def deliver_admin_push(*, business_id: str, title: str, body: str, url: st
     }
     for subscription in subscriptions:
         await push.send(subscription, payload)
+
+
+async def deliver_student_push(*, business_id: str, worker_id: str, title: str, body: str, url: str = "/worker", tag: str = "student-alert") -> None:
+    """Deliver push notification directly to a specific student's registered devices."""
+    if not push.configured():
+        return
+    query = {"business_id": business_id, "recipient_type": "worker", "recipient_id": worker_id}
+    subscriptions = await db.push_subscriptions.find(query, {"_id": 0}).to_list(20)
+    if not subscriptions:
+        return
+    payload = {
+        "title": title,
+        "body": body[:160],
+        "url": url,
+        "tag": tag,
+        "conversation_id": None,
+    }
+    for subscription in subscriptions:
+        await push.send(subscription, payload)
+
 
 
 async def deliver_student_broadcast_push(*, business_id: str, meal_slot: str, title: str, body: str, url: str = "/worker", tag: str = "meal-reminder") -> None:
@@ -4923,6 +4955,14 @@ async def save_student_meal_selection(
         "title": act_title,
         "created_at": now_iso,
     })
+
+    asyncio.create_task(deliver_admin_push(
+        business_id=biz_id,
+        title=f"🍽️ Meal Update: {sname}",
+        body=act_title,
+        url="/admin",
+        tag=f"meal-{wid}-{target_date}"
+    ))
 
     return {"ok": True, "selection": doc}
 

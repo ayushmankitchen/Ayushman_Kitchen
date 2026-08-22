@@ -15,7 +15,7 @@ import VoiceRecorder from "@/components/chat/VoiceRecorder";
 import AudioPlayer from "@/components/chat/AudioPlayer";
 import SpeechTyping from "@/components/chat/SpeechTyping";
 import useSmartChatScroll from "@/components/chat/useSmartChatScroll";
-import { clearConversationNotifications, enablePushNotifications, pushSupported, sendTestNotification, updateAppBadge } from "@/lib/notifications";
+import { clearConversationNotifications, enablePushNotifications, onPushNotification, pushSupported, sendTestNotification, updateAppBadge } from "@/lib/notifications";
 import {
   Loader2,
   LogOut,
@@ -749,11 +749,27 @@ export default function WorkerDashboard() {
   }, [user]);
 
   useEffect(() => {
-    if (tab === "messages") {
-      const interval = setInterval(loadChat, 3500);
-      return () => clearInterval(interval);
-    }
-  }, [tab, loadChat]);
+    if (!user) return undefined;
+    const interval = setInterval(() => {
+      loadChat();
+      if (tab === "home" || tab === "menu") {
+        loadData();
+      }
+    }, 4000);
+
+    const unsubscribe = onPushNotification((data) => {
+      loadChat();
+      loadData();
+      if (data?.title) {
+        toast.info(data.title, { description: data.body });
+      }
+    });
+
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
+  }, [user, tab, loadChat, loadData]);
 
   const handleSendText = async (e) => {
     e?.preventDefault();

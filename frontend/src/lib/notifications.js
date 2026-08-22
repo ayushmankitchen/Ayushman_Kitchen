@@ -110,3 +110,15 @@ export async function clearConversationNotifications(conversationId, totalUnread
   }
 }
 
+export function onPushNotification(callback) {
+  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return () => {};
+  const handler = (event) => {
+    if (event.data?.type === "PUSH_RECEIVED") {
+      callback(event.data.data);
+    }
+  };
+  navigator.serviceWorker.addEventListener("message", handler);
+  return () => navigator.serviceWorker.removeEventListener("message", handler);
+}
+
+

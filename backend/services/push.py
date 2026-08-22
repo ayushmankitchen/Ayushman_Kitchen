@@ -23,15 +23,20 @@ async def send(subscription: dict[str, Any], payload: dict[str, Any]) -> bool:
         return False
     try:
         from pywebpush import WebPushException, webpush
+        tag = str(payload.get("tag") or "notification")[:32]
         await asyncio.to_thread(
             webpush,
             subscription_info={"endpoint": subscription["endpoint"], "keys": subscription["keys"]},
             data=json.dumps(payload),
             vapid_private_key=os.environ["VAPID_PRIVATE_KEY"],
             vapid_claims={"sub": os.environ["VAPID_SUBJECT"]},
+            ttl=86400,
+            headers={
+                "Urgency": "high",
+            },
         )
         return True
     except Exception as exc:
-        # Expired subscriptions are removed by the caller; all other failures are non-fatal.
-        logger.warning("Web Push delivery failed: %s", exc)
+        logger.warning("Web Push delivery failed for endpoint: %s", exc)
         return False
+

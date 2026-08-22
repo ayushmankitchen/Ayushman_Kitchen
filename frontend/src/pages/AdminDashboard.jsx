@@ -21,7 +21,7 @@ import VoiceRecorder from "@/components/chat/VoiceRecorder";
 import AudioPlayer from "@/components/chat/AudioPlayer";
 import SpeechTyping from "@/components/chat/SpeechTyping";
 import useSmartChatScroll from "@/components/chat/useSmartChatScroll";
-import { clearConversationNotifications, enablePushNotifications, pushSupported, sendTestNotification, updateAppBadge } from "@/lib/notifications";
+import { clearConversationNotifications, enablePushNotifications, onPushNotification, pushSupported, sendTestNotification, updateAppBadge } from "@/lib/notifications";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   ChefHat, GraduationCap, HardHat, LayoutDashboard, Users, CalendarCheck, Wallet, Sparkles, LogOut,
@@ -127,9 +127,24 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (!admin) return undefined;
-    const interval = setInterval(loadUnreadMessages, 10000);
-    return () => clearInterval(interval);
-  }, [admin, loadUnreadMessages]);
+    const interval = setInterval(() => {
+      loadUnreadMessages();
+      loadOverviewData();
+    }, 4000);
+
+    const unsubscribe = onPushNotification((data) => {
+      loadUnreadMessages();
+      loadOverviewData();
+      if (data?.title) {
+        toast.info(data.title, { description: data.body });
+      }
+    });
+
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
+  }, [admin, loadUnreadMessages, loadOverviewData]);
 
   const doLogout = async () => {
     await logout();

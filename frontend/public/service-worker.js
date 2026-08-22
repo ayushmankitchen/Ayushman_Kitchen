@@ -10,18 +10,25 @@ self.addEventListener("push", (event) => {
     : unread === 0 && typeof self.navigator.clearAppBadge === "function"
       ? self.navigator.clearAppBadge()
       : Promise.resolve();
-  event.waitUntil(Promise.all([
-    self.registration.showNotification(data.title || "Ayushman Kitchen", {
-      body: data.body || "You have a new update.",
-      icon: "/favicon.ico",
-      badge: "/favicon.ico",
-      vibrate: [200, 100, 200],
-      data: { url: data.url || "/", conversationId: data.conversation_id || null },
-      tag: data.tag || data.conversation_id || `ayushman-kitchen-${Date.now()}`,
-      renotify: true,
-    }),
-    badgeUpdate,
-  ]));
+
+  // Broadcast to all active open tabs so UI updates in real-time immediately
+  const clientBroadcast = self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+    clientList.forEach((client) => {
+      client.postMessage({ type: "PUSH_RECEIVED", data });
+    });
+  });
+
+  const showNotification = self.registration.showNotification(data.title || "Ayushman Kitchen", {
+    body: data.body || "You have a new update.",
+    icon: "/favicon.ico",
+    badge: "/favicon.ico",
+    vibrate: [300, 100, 200, 100, 300],
+    data: { url: data.url || "/", conversationId: data.conversation_id || null },
+    tag: data.tag || data.conversation_id || `ayushman-kitchen-${Date.now()}`,
+    renotify: true,
+  });
+
+  event.waitUntil(Promise.all([showNotification, badgeUpdate, clientBroadcast]));
 });
 
 self.addEventListener("notificationclick", (event) => {
