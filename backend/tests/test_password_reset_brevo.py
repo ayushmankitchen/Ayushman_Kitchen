@@ -200,8 +200,55 @@ async def test_email_service_fallback(monkeypatch):
     from backend.services.email import BrevoEmailService
     service = BrevoEmailService()
 
-    # When BREVO_API_KEY is empty, it simulates and returns True gracefully without crashing
-    monkeypatch.setenv("BREVO_API_KEY", "")
+    # When EMAIL_USER / EMAIL_PASSWORD is empty, it simulates and returns True gracefully without crashing
+    monkeypatch.setenv("EMAIL_USER", "")
+    monkeypatch.setenv("EMAIL_PASSWORD", "")
     res = await service.send_password_reset_email("test@example.com", "Tester", "http://localhost:3000/reset-password?token=abc")
     assert res is True
+    assert service.host == "smtp-relay.brevo.com"
+    assert service.port == 587
+    assert service.sender_email == "ayushmankitchen@gmail.com"
+    assert service.sender_name == "Ayushman Kitchen"
+
+
+@pytest.mark.asyncio
+async def test_smtp_send_mocked(monkeypatch):
+    from backend.services.email import BrevoEmailService
+    import backend.services.email as email_mod
+
+    sent_calls = []
+
+    def mock_smtp_sync(host, port, user, password, from_name, from_email, to_name, to_email, subject, reset_link, timeout):
+        sent_calls.append({
+            "host": host,
+            "port": port,
+            "user": user,
+            "from_name": from_name,
+            "from_email": from_email,
+            "to_name": to_name,
+            "to_email": to_email,
+            "subject": subject,
+            "reset_link": reset_link,
+        })
+        return True
+
+    monkeypatch.setattr(email_mod, "_send_smtp_sync", mock_smtp_sync)
+    monkeypatch.setenv("EMAIL_USER", "mock_brevo_user")
+    monkeypatch.setenv("EMAIL_PASSWORD", "mock_brevo_smtp_key")
+
+    service = BrevoEmailService()
+    success = await service.send_password_reset_email(
+        "recipient@example.com",
+        "Test Student",
+        "http://localhost:3000/reset-password?token=test_smtp_token"
+    )
+    assert success is True
+    assert len(sent_calls) == 1
+    assert sent_calls[0]["host"] == "smtp-relay.brevo.com"
+    assert sent_calls[0]["port"] == 587
+    assert sent_calls[0]["user"] == "mock_brevo_user"
+    assert sent_calls[0]["to_email"] == "recipient@example.com"
+    assert sent_calls[0]["from_email"] == "ayushmankitchen@gmail.com"
+    assert "token=test_smtp_token" in sent_calls[0]["reset_link"]
+
 
