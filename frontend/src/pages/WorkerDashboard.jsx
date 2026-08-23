@@ -117,6 +117,14 @@ function MealSlotCard({
   const isPlanIncluded = slotData.is_plan_included !== false;
   const isOnLeave     = slotData.is_on_leave;
   const isHoliday     = slotData.is_holiday;
+  const isMessClosed  = slotData.is_mess_closed;
+  const messReason    = slotData.mess_closure?.reason || "";
+  const messSpan      = slotData.mess_closure?.start_date
+    ? (slotData.mess_closure.end_date && slotData.mess_closure.end_date !== slotData.mess_closure.start_date
+        ? `${slotData.mess_closure.start_date} → ${slotData.mess_closure.end_date}`
+        : slotData.mess_closure.start_date)
+    : "";
+  const isPremiumFixed = slotData.is_premium_fixed;
   const isClosed      = slotData.is_closed;
   const windowOpen    = slotData.window?.is_open;
   const windowStart   = slotData.window?.start_time || "";
@@ -148,7 +156,7 @@ function MealSlotCard({
   } else if (isHoliday || isClosed) {
     windowBadge = (
       <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200 px-2 py-0.5 rounded-full">
-        <CalendarOff className="h-3 w-3" /> Kitchen Closed
+        <CalendarOff className="h-3 w-3" /> {isMessClosed ? "Mess Closed" : "Kitchen Closed"}
       </span>
     );
   } else if (windowOpen) {
@@ -215,8 +223,18 @@ function MealSlotCard({
       {isPlanIncluded && !isOnLeave && (isHoliday || isClosed) && (
         <div className="flex-1 flex flex-col items-center justify-center py-6 text-center gap-2">
           <CalendarOff className="h-8 w-8 text-rose-400" />
-          <p className="text-sm font-bold text-rose-700">{isHoliday ? "Holiday – Kitchen Closed" : "Kitchen Closed for This Meal"}</p>
-          <p className="text-xs text-slate-400">No {title.toLowerCase()} service today.</p>
+          <p className="text-sm font-bold text-rose-700">
+            {isMessClosed ? "Mess Closed by Admin" : isHoliday ? "Holiday – Kitchen Closed" : "Kitchen Closed for This Meal"}
+          </p>
+          {isMessClosed ? (
+            <>
+              {messReason && <p className="text-xs text-rose-600 font-semibold px-4">{messReason}</p>}
+              {messSpan && <p className="text-[11px] text-slate-400">{messSpan}</p>}
+              <p className="text-[11px] text-emerald-600 font-semibold mt-1">✓ This meal won't be counted from your quota.</p>
+            </>
+          ) : (
+            <p className="text-xs text-slate-400">No {title.toLowerCase()} service today.</p>
+          )}
         </div>
       )}
 
@@ -329,7 +347,12 @@ function MealSlotCard({
           {/* Premium plan: gourmet dish choices */}
           {!isCancelled && plan === "Premium" && (
             <div className="space-y-3 flex-1">
-              <p className="text-xs font-bold text-amber-700 flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5" /> Select Your Gourmet Dish</p>
+              <p className="text-xs font-bold text-amber-700 flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5" />
+                {slotData.is_sunday_special
+                  ? "🍗 Sunday Lunch Special (Biryani Feast) – Select Veg or Non-Veg"
+                  : "Select Your Gourmet Dish"}
+              </p>
               <div className="space-y-2">
                 {(slotData.menu?.premium_options || []).map((opt) => {
                   const sel = slotData.selected_item_id === opt.id || slotData.selected_item_name === opt.name;
@@ -337,24 +360,29 @@ function MealSlotCard({
                     <div
                       key={opt.id}
                       onClick={() => windowOpen && onAction(slotKey, "CONFIRM", "PREMIUM_ITEM", opt.id, opt.name)}
-                      className={`p-3 rounded-2xl border-2 cursor-pointer transition-all ${
-                        sel ? `border-amber-500 bg-amber-50` : "border-stone-200 bg-stone-50 hover:border-amber-300"
+                      className={`p-3.5 rounded-2xl border-2 cursor-pointer transition-all ${
+                        sel ? "border-amber-500 bg-amber-50 shadow-xs" : "border-stone-200 bg-stone-50 hover:border-amber-300"
                       } ${!windowOpen ? "opacity-60 pointer-events-none" : ""}`}
                     >
                       <div className="flex items-center justify-between">
                         <div>
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full mr-1.5 ${
-                            opt.type === "NON_VEG" ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"
-                          }`}>{opt.type === "NON_VEG" ? "🍗" : "🥦"}</span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full mr-1.5 ${
+                            opt.type === "NON_VEG" ? "bg-rose-100 text-rose-700 border border-rose-200" : "bg-emerald-100 text-emerald-700 border border-emerald-200"
+                          }`}>{opt.type === "NON_VEG" ? "🍗 Non-Veg" : "🥦 Veg"}</span>
                           <span className="text-sm font-bold text-slate-900">{opt.name}</span>
                         </div>
                         {sel && <CheckCircle2 className="h-4 w-4 text-amber-600 shrink-0" />}
                       </div>
-                      {opt.description && <p className="text-xs text-slate-500 mt-1 ml-7">{opt.description}</p>}
+                      {opt.description && <p className="text-xs text-slate-500 mt-1 ml-1">{opt.description}</p>}
                     </div>
                   );
                 })}
               </div>
+              {slotData.is_sunday_special && (
+                <p className="text-[11px] text-amber-800 font-semibold flex items-center gap-1">
+                  💡 Tip: You can switch between Veg and Non-Veg Biryani anytime before the lunch cutoff window closes.
+                </p>
+              )}
             </div>
           )}
 
@@ -583,16 +611,21 @@ export default function WorkerDashboard() {
         delivery_address: currentDeliveryAddress,
         delivery_notes: currentDeliveryNotes,
       };
-      await workerApi.post("/worker/select-meal", payload);
+      const res = await workerApi.post("/worker/select-meal", payload);
       if (action === "CANCEL") {
         toast.info(`❌ ${slotKey.toUpperCase()} cancelled. You are marked as not eating.`);
       } else {
+        // Trust what the backend actually saved — it may override the request
+        // (e.g. Sunday premium is forced to the fixed biryani regardless of pref).
+        const saved = res?.data?.selection || {};
+        const savedType = saved.selection_type || selectionType;
+        const savedName = saved.selected_item_name || itemName;
         toast.success(
-          selectionType === "NON_VEG"
+          savedType === "NON_VEG"
             ? `🍗 Non-Veg ${slotKey.toUpperCase()} confirmed!`
-            : selectionType === "VEG"
+            : savedType === "VEG"
             ? `🥦 Pure Veg ${slotKey.toUpperCase()} confirmed!`
-            : `⭐ "${itemName}" confirmed for ${slotKey.toUpperCase()}!`
+            : `⭐ "${savedName}" confirmed for ${slotKey.toUpperCase()}!`
         );
       }
       await Promise.all([loadTodayMeal(), loadMealStats()]);
@@ -1068,8 +1101,8 @@ export default function WorkerDashboard() {
                   </div>
                 )}
 
-                {/* ⏳ Expiring Soon in <= 5 days */}
-                {!mealStats?.is_validity_expired && mealStats?.validity_days_left <= 5 && (mealStats?.total_remaining ?? 0) > 0 && (
+                {/* ⏳ Expiring Soon in <= 5 days (suppressed while holiday freezes validity) */}
+                {!mealStats?.is_validity_expired && !mealStats?.holiday_mode_active && mealStats?.validity_days_left <= 5 && (mealStats?.total_remaining ?? 0) > 0 && (
                   <div className="p-4 sm:p-5 rounded-3xl bg-amber-50 border-2 border-amber-300 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-start gap-3.5">
                       <div className="h-10 w-10 rounded-2xl bg-amber-200 text-amber-950 flex items-center justify-center font-bold shrink-0 mt-0.5">
@@ -1284,6 +1317,52 @@ export default function WorkerDashboard() {
                       Menu not available for today
                     </div>
                   ) : (
+                    <>
+                    {/* 🏫 College holiday mode active banner */}
+                    {todayMeal?.college_holiday?.is_active && (
+                      <div className="bg-indigo-50 border border-indigo-200 rounded-3xl p-4 sm:p-5 flex items-start gap-3">
+                        <div className="h-9 w-9 rounded-2xl bg-indigo-500 text-white flex items-center justify-center shrink-0">
+                          <GraduationCap className="h-5 w-5" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-extrabold text-indigo-900">🏫 College Holiday Mode is ON</p>
+                          <p className="text-xs text-indigo-700 mt-0.5">
+                            Your 45-day validity is <strong>paused</strong> during the holiday{todayMeal.college_holiday.reason ? ` (${todayMeal.college_holiday.reason})` : ""}. Turn meals off while you're home — your subscription will end only when your meal quota finishes, not by date.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 🚫 Mess closed by admin banner — only when a slot is actually closed TODAY.
+                        (mess_closure.is_active is a persistent config flag that stays true for
+                        future-dated or expired-but-not-toggled-off closures, so we key off the
+                        per-slot, date-scoped is_mess_closed instead to match the meal cards.) */}
+                    {(() => {
+                      const lunchClosed = todayMeal?.lunch?.is_mess_closed;
+                      const dinnerClosed = todayMeal?.dinner?.is_mess_closed;
+                      if (!lunchClosed && !dinnerClosed) return null;
+                      const closedLabel = [lunchClosed && "Lunch", dinnerClosed && "Dinner"].filter(Boolean).join(" & ") || "Lunch & Dinner";
+                      const info = (lunchClosed ? todayMeal.lunch?.mess_closure : todayMeal.dinner?.mess_closure) || {};
+                      return (
+                        <div className="bg-rose-50 border border-rose-200 rounded-3xl p-4 sm:p-5 flex items-start gap-3">
+                          <div className="h-9 w-9 rounded-2xl bg-rose-500 text-white flex items-center justify-center shrink-0">
+                            <CalendarOff className="h-5 w-5" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-extrabold text-rose-900">
+                              🚫 Mess Closed: {closedLabel}
+                            </p>
+                            <p className="text-xs text-rose-700 mt-0.5">
+                              {info.start_date}
+                              {info.end_date && info.end_date !== info.start_date ? ` → ${info.end_date}` : ""}
+                              {info.reason ? ` • ${info.reason}` : ""}
+                            </p>
+                            <p className="text-[11px] text-emerald-700 font-semibold mt-1">✓ Closed meals are not deducted from your quota. Meal selection is disabled during this period.</p>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                       {/* ☀️ LUNCH CARD */}
                       <MealSlotCard
@@ -1323,6 +1402,7 @@ export default function WorkerDashboard() {
                         onEndLeave={handleEndLeave}
                       />
                     </div>
+                    </>
                   )}
                 </div>
 

@@ -682,6 +682,12 @@ class MessageCreate(BaseModel):
     duration: Optional[float] = 0.0
 
 
+class BroadcastMessageCreate(BaseModel):
+    recipient_mode: str = "ALL"  # ALL | SELECTED | PREMIUM | STANDARD
+    worker_ids: Optional[List[str]] = []
+    text: str = Field(min_length=1, max_length=4000)
+
+
 class PushSubscriptionCreate(BaseModel):
     endpoint: str = Field(min_length=1, max_length=2048)
     keys: Dict[str, str]
@@ -2647,6 +2653,53 @@ async def deliver_student_broadcast_push(*, business_id: str, meal_slot: str, ti
         await push.send(subscription, payload)
 
 
+async def deliver_student_slots_push(*, business_id: str, slots: list, title: str, body: str, url: str = "/worker", tag: str = "mess-notice") -> None:
+    """Broadcast an admin notice (mess closure, college holiday) to every active student
+    whose plan covers any of `slots`. Unlike the meal reminder, students on vacation are
+    included — closures and holiday mode affect them too."""
+    if not push.configured():
+        return
+
+    slot_set = {str(s).strip().lower() for s in (slots or []) if str(s).strip()} or {"lunch", "dinner"}
+    plan_values = ["BOTH", "both"]
+    for slot in slot_set:
+        plan_values += [f"{slot.upper()}_ONLY", f"{slot.lower()}_only"]
+
+    active_students = await db.workers.find(
+        {
+            "business_id": business_id,
+            "status": {"$ne": "INACTIVE"},
+            "$or": [
+                {"meal_plan_type": {"$exists": False}},
+                {"meal_plan_type": None},
+                {"meal_plan_type": {"$in": plan_values}},
+            ]
+        },
+        {"id": 1, "_id": 0}
+    ).to_list(2000)
+
+    target_wids = [s["id"] for s in active_students]
+    if not target_wids:
+        return
+
+    subscriptions = await db.push_subscriptions.find(
+        {"business_id": business_id, "recipient_type": "worker", "recipient_id": {"$in": target_wids}},
+        {"_id": 0}
+    ).to_list(2000)
+    if not subscriptions:
+        return
+
+    payload = {
+        "title": title,
+        "body": body[:160],
+        "url": url,
+        "tag": tag,
+        "conversation_id": None,
+    }
+    for subscription in subscriptions:
+        await push.send(subscription, payload)
+
+
 @api_router.get("/chat/conversations")
 async def list_admin_conversations(admin: dict = Depends(get_current_admin)):
     """Returns conversation list for all workers in the admin's business."""
@@ -3031,8 +3084,14 @@ async def check_and_send_meal_reminders() -> None:
                 },
             ]
 
+            closure_cfg = menu_doc.get("mess_closure")
+            closure_cfg = closure_cfg if isinstance(closure_cfg, dict) else {}
+
             for ev in events:
                 if current_time == ev["trigger_time"]:
+                    # Skip reminders for a slot the admin has closed today (no menu to open / no roster to prep)
+                    if get_mess_closure_status(closure_cfg, ev["slot"], today)["is_closed"]:
+                        continue
                     # Check if already triggered today
                     log_exists = await db.meal_reminder_logs.find_one({
                         "business_id": biz_id,
@@ -3309,6 +3368,107 @@ async def send_message(body: MessageCreate, request: Request):
 
     msg_doc.pop("_id", None)
     return msg_doc
+
+
+@api_router.post("/chat/broadcast")
+async def broadcast_message(body: BroadcastMessageCreate, admin: dict = Depends(get_current_admin)):
+    """Broadcasts a message to all active students, specific selected students, or plan groups."""
+    biz_id = admin["business_id"]
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    filter_q: dict[str, Any] = {"business_id": biz_id, "status": "ACTIVE"}
+    if body.recipient_mode == "SELECTED":
+        if not body.worker_ids:
+            raise HTTPException(status_code=400, detail="Please select at least one student to message.")
+        filter_q["id"] = {"$in": body.worker_ids}
+    elif body.recipient_mode == "PREMIUM":
+        filter_q["work_type"] = {"$regex": "^premium$", "$options": "i"}
+    elif body.recipient_mode == "STANDARD":
+        filter_q["work_type"] = {"$ne": "Premium"}
+
+    workers = await db.workers.find(filter_q, {"_id": 0, "id": 1, "name": 1}).to_list(1000)
+    if not workers:
+        raise HTTPException(status_code=400, detail="No active students found matching the selected criteria.")
+
+    now_dt = datetime.now(timezone.utc)
+    now_iso = now_dt.isoformat()
+    expires_at = now_dt + MESSAGE_RETENTION
+
+    sent_count = 0
+    for w in workers:
+        wid = w["id"]
+        conv = await db.conversations.find_one({"business_id": biz_id, "worker_id": wid})
+        if not conv:
+            conv_id = str(uuid.uuid4())
+            await db.conversations.insert_one({
+                "id": conv_id,
+                "business_id": biz_id,
+                "worker_id": wid,
+                "created_at": now_iso,
+                "updated_at": now_iso,
+                "last_message": None
+            })
+        else:
+            conv_id = conv["id"]
+
+        msg_id = str(uuid.uuid4())
+        msg_doc = {
+            "id": msg_id,
+            "business_id": biz_id,
+            "conversation_id": conv_id,
+            "worker_id": wid,
+            "sender_type": "owner",
+            "sender_id": admin["id"],
+            "message_type": "text",
+            "text": text,
+            "audio_asset_id": None,
+            "audio_url": None,
+            "duration": 0.0,
+            "created_at": now_iso,
+            "read_at": None,
+            "expires_at": expires_at,
+        }
+        await db.messages.insert_one(msg_doc)
+
+        await db.conversations.update_one(
+            {"id": conv_id},
+            {
+                "$set": {
+                    "updated_at": now_iso,
+                    "last_message": {
+                        "text": text,
+                        "sender_type": "owner",
+                        "created_at": now_iso
+                    }
+                }
+            }
+        )
+
+        asyncio.create_task(deliver_chat_push(
+            business_id=biz_id,
+            worker_id=wid,
+            sender_type="owner",
+            conversation_id=conv_id,
+            preview=text
+        ))
+        sent_count += 1
+
+    # Log Activity
+    await db.activity_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "business_id": biz_id,
+        "type": "BROADCAST_SENT",
+        "title": f"📢 Broadcast sent to {sent_count} student(s)",
+        "created_at": now_iso,
+    })
+
+    return {
+        "ok": True,
+        "sent_count": sent_count,
+        "recipient_mode": body.recipient_mode
+    }
 
 
 @api_router.post("/chat/upload-audio")
@@ -3702,8 +3862,12 @@ async def get_low_balance_students(admin: dict = Depends(get_current_admin)):
         rem = stats.get("total_remaining")
         is_exp = stats.get("is_expired", False)
         days_left = stats.get("validity_days_left", 45)
-        # Alert if expired OR <= 4 meals remaining OR <= 5 validity days remaining
-        if is_exp or (rem is not None and rem <= 4) or days_left <= 5:
+        holiday_frozen = bool(stats.get("holiday_mode_active"))
+        # Alert if expired OR <= 4 meals remaining OR <= 5 validity days remaining.
+        # During an active college holiday the 45-day validity is frozen, so the
+        # days-left signal is meaningless — don't flag a student for that reason alone
+        # (a genuinely low meal count or a real expiry still qualifies them).
+        if is_exp or (rem is not None and rem <= 4) or (days_left <= 5 and not holiday_frozen):
             low_balance_list.append({
                 "student": s,
                 "stats": stats,
@@ -3753,6 +3917,16 @@ async def compute_worker_meal_consumption(biz_id: str, worker: dict):
     dinner_end = windows.get("dinner", {}).get("end_time", "19:00").strip() or "19:00"
     current_time_str = now_tz().strftime("%H:%M")
 
+    # Admin mess controls: college holiday mode (validity pause) + mess closure (no quota burn)
+    holiday_cfg = (menu_doc or {}).get("college_holiday")
+    holiday_cfg = holiday_cfg if isinstance(holiday_cfg, dict) else {}
+    closure_cfg = (menu_doc or {}).get("mess_closure")
+    closure_cfg = closure_cfg if isinstance(closure_cfg, dict) else {}
+    # Treat the holiday as active only once it has actually STARTED. A future-dated
+    # holiday must not pause anything yet, otherwise the flag would claim "validity
+    # paused" while contributing zero paused days.
+    holiday_mode_active = bool(holiday_cfg.get("is_active")) and (holiday_cfg.get("start_date") or "9999-12-31") <= today
+
     # Earliest start date for queries
     starts = []
     if has_lunch:
@@ -3801,16 +3975,27 @@ async def compute_worker_meal_consumption(biz_id: str, worker: dict):
 
     sel_map = {(s["date"], s.get("meal_slot", "lunch")): s for s in selections}
 
+    # Dates the admin closed the mess — those meals were never served, so they must not
+    # be deducted from the student's quota.
+    range_lo = enrolled_dates[0] if enrolled_dates else today
+    range_hi = enrolled_dates[-1] if enrolled_dates else today
+    mess_closed_lunch = closed_dates_for_slot(closure_cfg, "lunch", range_lo, range_hi)
+    mess_closed_dinner = closed_dates_for_slot(closure_cfg, "dinner", range_lo, range_hi)
+
     lunch_used = 0
     dinner_used = 0
     lunch_skipped = 0
     dinner_skipped = 0
+    mess_closed_days = 0
 
     for d in enrolled_dates:
         if d in leave_dates:
             continue
 
-        if has_lunch and d >= lunch_start_date:
+        if d in mess_closed_lunch or d in mess_closed_dinner:
+            mess_closed_days += 1
+
+        if has_lunch and d >= lunch_start_date and d not in mess_closed_lunch:
             sel = sel_map.get((d, "lunch"))
             is_cancelled = bool(sel and (sel.get("selection_type") == "CANCELLED" or sel.get("action") == "CANCEL"))
             if is_cancelled:
@@ -3820,7 +4005,7 @@ async def compute_worker_meal_consumption(biz_id: str, worker: dict):
                 if d < today or (d == today and current_time_str >= lunch_end):
                     lunch_used += 1
 
-        if has_dinner and d >= dinner_start_date:
+        if has_dinner and d >= dinner_start_date and d not in mess_closed_dinner:
             sel = sel_map.get((d, "dinner"))
             is_cancelled = bool(sel and (sel.get("selection_type") == "CANCELLED" or sel.get("action") == "CANCEL"))
             if is_cancelled:
@@ -3833,13 +4018,24 @@ async def compute_worker_meal_consumption(biz_id: str, worker: dict):
     total_used = lunch_used + dinner_used
     raw_remaining = max(0, total_quota - total_used) if total_quota > 0 else 0
 
-    # 45-Day Maximum Subscription Validity
+    # 45-Day Maximum Subscription Validity.
+    # College-holiday days do not count against it: when the admin turns holiday mode on,
+    # students go home and pause their meals, so those days are added back to the window.
+    # Adding the paused days IS the freeze — while the holiday runs, days_elapsed and
+    # holiday_paused_days both grow by 1 per day, so validity_days_left stays put and the
+    # plan can then only end by exhausting the meal quota. Turning the toggle back off
+    # resumes normal counting. Note we deliberately do NOT blanket-suppress expiry on the
+    # holiday flag: that would revive a subscription that had already lapsed before the
+    # holiday was declared and hand back its forfeited meals.
     SUBSCRIPTION_MAX_VALIDITY_DAYS = 45
     days_elapsed = (today_dt - start_dt).days
-    validity_expiry_dt = start_dt + timedelta(days=SUBSCRIPTION_MAX_VALIDITY_DAYS)
+    holiday_paused_days = count_period_days(holiday_cfg, earliest_start, today)
+    effective_validity_days = SUBSCRIPTION_MAX_VALIDITY_DAYS + holiday_paused_days
+    validity_expiry_dt = start_dt + timedelta(days=effective_validity_days)
     validity_expiry_date = validity_expiry_dt.strftime("%Y-%m-%d")
-    validity_days_left = max(0, SUBSCRIPTION_MAX_VALIDITY_DAYS - days_elapsed)
-    is_validity_expired = days_elapsed > SUBSCRIPTION_MAX_VALIDITY_DAYS
+    validity_days_left = max(0, effective_validity_days - days_elapsed)
+    is_validity_expired = days_elapsed > effective_validity_days
+
 
     lapsed_meals = 0
     if is_validity_expired:
@@ -3871,7 +4067,8 @@ async def compute_worker_meal_consumption(biz_id: str, worker: dict):
         "total_skipped": total_skipped,
         "total_remaining": total_remaining,
         "raw_remaining": raw_remaining,
-        "validity_days": SUBSCRIPTION_MAX_VALIDITY_DAYS,
+        "validity_days": effective_validity_days,
+        "base_validity_days": SUBSCRIPTION_MAX_VALIDITY_DAYS,
         "validity_expiry_date": validity_expiry_date,
         "validity_days_left": validity_days_left,
         "days_elapsed": days_elapsed,
@@ -3879,6 +4076,11 @@ async def compute_worker_meal_consumption(biz_id: str, worker: dict):
         "is_expired": is_expired,
         "expiry_reason": expiry_reason,
         "lapsed_meals": lapsed_meals,
+        "holiday_mode_active": holiday_mode_active,
+        "holiday_reason": holiday_cfg.get("reason") or "",
+        "holiday_start_date": holiday_cfg.get("start_date") or "",
+        "holiday_paused_days": holiday_paused_days,
+        "mess_closed_days": mess_closed_days,
     }
 
 
@@ -4314,7 +4516,151 @@ DEFAULT_WEEKLY_MENU = {
 }
 
 
-def check_meal_slot_window(slot_key: str, windows: dict, day_slot_menu: dict, target_date_str: str) -> dict:
+# ---------------------------------------------------------------------------
+# College Holiday Mode (pauses subscription validity) & Mess Closure controls
+# ---------------------------------------------------------------------------
+
+DEFAULT_COLLEGE_HOLIDAY = {
+    "is_active": False,
+    "start_date": "",
+    "end_date": "",
+    "reason": "",
+    "history": [],
+}
+
+DEFAULT_MESS_CLOSURE = {
+    "is_active": False,
+    "slots": [],
+    "start_date": "",
+    "end_date": "",
+    "reason": "",
+    "history": [],
+}
+
+ALL_MEAL_SLOTS = ["lunch", "dinner"]
+
+
+def normalize_closure_slots(raw) -> list:
+    """Sanitize a slots payload into a subset of ['lunch', 'dinner'] (empty -> both)."""
+    if isinstance(raw, str):
+        raw = [raw]
+    slots = []
+    for item in (raw or []):
+        val = str(item).strip().lower()
+        if val == "both":
+            return list(ALL_MEAL_SLOTS)
+        if val in ALL_MEAL_SLOTS and val not in slots:
+            slots.append(val)
+    return slots or list(ALL_MEAL_SLOTS)
+
+
+def period_list(config: dict) -> list:
+    """Every period (completed history + the live one, if active) from a holiday/closure config."""
+    if not isinstance(config, dict):
+        return []
+    periods = [p for p in (config.get("history") or []) if isinstance(p, dict)]
+    if config.get("is_active") and (config.get("start_date") or "").strip():
+        periods = periods + [{
+            "start_date": (config.get("start_date") or "").strip(),
+            "end_date": (config.get("end_date") or "").strip(),
+            "slots": config.get("slots") or [],
+            "reason": config.get("reason") or "",
+        }]
+    return periods
+
+
+def count_period_days(config: dict, lo: str, hi: str) -> int:
+    """Distinct calendar days inside [lo, hi] that are covered by any period of the config."""
+    if not config or lo > hi:
+        return 0
+    covered = set()
+    for p in period_list(config):
+        start = (p.get("start_date") or "").strip()
+        if not start:
+            continue
+        # An open-ended (still running) period extends up to `hi`
+        end = (p.get("end_date") or "").strip() or hi
+        start = max(start, lo)
+        end = min(end, hi)
+        if start > end:
+            continue
+        try:
+            cur = datetime.strptime(start, "%Y-%m-%d")
+            last = datetime.strptime(end, "%Y-%m-%d")
+        except Exception:
+            continue
+        while cur <= last:
+            covered.add(cur.strftime("%Y-%m-%d"))
+            cur += timedelta(days=1)
+    return len(covered)
+
+
+def get_mess_closure_status(config: dict, slot_key: str, target_date_str: str) -> dict:
+    """Whether the mess is administratively closed for `slot_key` on `target_date_str`."""
+    slot = (slot_key or "").strip().lower()
+    for p in period_list(config):
+        start = (p.get("start_date") or "").strip()
+        end = (p.get("end_date") or "").strip()
+        if not start or target_date_str < start:
+            continue
+        if end and target_date_str > end:
+            continue
+        slots = normalize_closure_slots(p.get("slots"))
+        if slot in slots:
+            return {
+                "is_closed": True,
+                "reason": p.get("reason") or "Mess temporarily closed by admin",
+                "start_date": start,
+                "end_date": end,
+                "slots": slots,
+            }
+    return {"is_closed": False, "reason": "", "start_date": "", "end_date": "", "slots": []}
+
+
+def closed_dates_for_slot(config: dict, slot_key: str, lo: str, hi: str) -> set:
+    """Set of dates in [lo, hi] where `slot_key` was closed by admin (so it must not burn quota)."""
+    if not config or lo > hi:
+        return set()
+    slot = (slot_key or "").strip().lower()
+    closed = set()
+    for p in period_list(config):
+        if slot not in normalize_closure_slots(p.get("slots")):
+            continue
+        start = (p.get("start_date") or "").strip()
+        if not start:
+            continue
+        end = (p.get("end_date") or "").strip() or hi
+        start = max(start, lo)
+        end = min(end, hi)
+        if start > end:
+            continue
+        try:
+            cur = datetime.strptime(start, "%Y-%m-%d")
+            last = datetime.strptime(end, "%Y-%m-%d")
+        except Exception:
+            continue
+        while cur <= last:
+            closed.add(cur.strftime("%Y-%m-%d"))
+            cur += timedelta(days=1)
+    return closed
+
+
+def check_meal_slot_window(slot_key: str, windows: dict, day_slot_menu: dict, target_date_str: str, mess_closure: dict = None) -> dict:
+    # Admin mess closure overrides everything else (lunch / dinner / both, for N days)
+    closure = get_mess_closure_status(mess_closure or {}, slot_key, target_date_str)
+    if closure["is_closed"]:
+        span = closure["start_date"]
+        if closure["end_date"]:
+            span = f"{closure['start_date']} to {closure['end_date']}"
+        return {
+            "is_open": False,
+            "status": "MESS_CLOSED",
+            "message": f"Mess Closed by Admin ({span}) — {closure['reason']}",
+            "start_time": "",
+            "end_time": "",
+            "closure": closure,
+        }
+
     is_closed = day_slot_menu.get("is_closed", False) if isinstance(day_slot_menu, dict) else False
     if is_closed:
         return {
@@ -4324,7 +4670,7 @@ def check_meal_slot_window(slot_key: str, windows: dict, day_slot_menu: dict, ta
             "start_time": "",
             "end_time": ""
         }
-    
+
     win = windows.get(slot_key, DEFAULT_MEAL_WINDOWS.get(slot_key, {}))
     if not win.get("is_enabled", True):
         return {
@@ -4408,6 +4754,76 @@ DEFAULT_PREMIUM_ITEMS = [
     {"id": "p-5", "name": "🥦 Kadai Paneer & Dal Makhani Feast", "type": "VEG", "description": "Spiced kadai paneer, slow-cooked black dal makhani, and jeera rice"},
 ]
 
+# Sunday is a special Biryani Day for lunch with Veg & Non-Veg choices. Sunday dinner uses regular menu.
+DEFAULT_PREMIUM_SUNDAY = {
+    "lunch_veg": {
+        "id": "p-sun-lunch-veg",
+        "name": "🥦 Special Sunday Veg Paneer Dum Biryani",
+        "type": "VEG",
+        "description": "Hyderabadi spiced Veg & Paneer Dum Biryani, Mirchi Ka Salan, Boondi Raita, Gulab Jamun",
+    },
+    "lunch_non_veg": {
+        "id": "p-sun-lunch-non-veg",
+        "name": "🍗 Special Sunday Chicken Dum Biryani",
+        "type": "NON_VEG",
+        "description": "Hyderabadi Chicken Dum Biryani, Mirchi Ka Salan, Boondi Raita, Gulab Jamun",
+    },
+}
+
+
+def normalize_premium_sunday(raw) -> dict:
+    """Coerce an admin-supplied premium Sunday payload into {lunch_veg: dish, lunch_non_veg: dish}."""
+    if not isinstance(raw, dict):
+        raw = {}
+
+    # Handle lunch_veg
+    raw_veg = raw.get("lunch_veg")
+    if not isinstance(raw_veg, dict):
+        if isinstance(raw.get("lunch"), dict) and raw.get("lunch", {}).get("type") == "VEG":
+            raw_veg = raw.get("lunch")
+        else:
+            raw_veg = {}
+
+    veg_name = str(raw_veg.get("name") or "").strip() or DEFAULT_PREMIUM_SUNDAY["lunch_veg"]["name"]
+    veg_desc = str(raw_veg.get("description") or "").strip()
+    if not veg_desc and veg_name == DEFAULT_PREMIUM_SUNDAY["lunch_veg"]["name"]:
+        veg_desc = DEFAULT_PREMIUM_SUNDAY["lunch_veg"]["description"]
+
+    # Handle lunch_non_veg
+    raw_non_veg = raw.get("lunch_non_veg")
+    if not isinstance(raw_non_veg, dict):
+        if isinstance(raw.get("lunch"), dict) and raw.get("lunch", {}).get("type") != "VEG":
+            raw_non_veg = raw.get("lunch")
+        else:
+            raw_non_veg = {}
+
+    non_veg_name = str(raw_non_veg.get("name") or "").strip() or DEFAULT_PREMIUM_SUNDAY["lunch_non_veg"]["name"]
+    non_veg_desc = str(raw_non_veg.get("description") or "").strip()
+    if not non_veg_desc and non_veg_name == DEFAULT_PREMIUM_SUNDAY["lunch_non_veg"]["name"]:
+        non_veg_desc = DEFAULT_PREMIUM_SUNDAY["lunch_non_veg"]["description"]
+
+    return {
+        "lunch_veg": {
+            "id": "p-sun-lunch-veg",
+            "name": veg_name,
+            "type": "VEG",
+            "description": veg_desc,
+        },
+        "lunch_non_veg": {
+            "id": "p-sun-lunch-non-veg",
+            "name": non_veg_name,
+            "type": "NON_VEG",
+            "description": non_veg_desc,
+        },
+    }
+
+
+def sunday_lunch_premium_options(menu_doc: dict) -> list[dict]:
+    """Returns the two Sunday lunch options: [lunch_veg, lunch_non_veg]."""
+    raw = (menu_doc or {}).get("premium_sunday")
+    normalized = normalize_premium_sunday(raw)
+    return [normalized["lunch_veg"], normalized["lunch_non_veg"]]
+
 
 @api_router.get("/meal-settings")
 async def get_meal_settings(admin: dict = Depends(get_current_admin)):
@@ -4419,6 +4835,9 @@ async def get_meal_settings(admin: dict = Depends(get_current_admin)):
             "days": DEFAULT_WEEKLY_MENU,
             "windows": DEFAULT_MEAL_WINDOWS,
             "premium_items": DEFAULT_PREMIUM_ITEMS,
+            "premium_sunday": DEFAULT_PREMIUM_SUNDAY,
+            "college_holiday": DEFAULT_COLLEGE_HOLIDAY,
+            "mess_closure": DEFAULT_MESS_CLOSURE,
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
         await db.meal_settings.update_one({"business_id": biz_id}, {"$set": doc}, upsert=True)
@@ -4426,6 +4845,11 @@ async def get_meal_settings(admin: dict = Depends(get_current_admin)):
         doc["windows"] = DEFAULT_MEAL_WINDOWS
     if "premium_items" not in doc or not doc["premium_items"]:
         doc["premium_items"] = DEFAULT_PREMIUM_ITEMS
+    doc["premium_sunday"] = normalize_premium_sunday(doc.get("premium_sunday"))
+    if not isinstance(doc.get("college_holiday"), dict):
+        doc["college_holiday"] = dict(DEFAULT_COLLEGE_HOLIDAY)
+    if not isinstance(doc.get("mess_closure"), dict):
+        doc["mess_closure"] = dict(DEFAULT_MESS_CLOSURE)
     return doc
 
 
@@ -4443,11 +4867,264 @@ async def update_meal_settings(body: dict = Body(...), admin: dict = Depends(get
         "days": days,
         "windows": windows,
         "premium_items": premium_items if isinstance(premium_items, list) and len(premium_items) > 0 else DEFAULT_PREMIUM_ITEMS,
+        "premium_sunday": normalize_premium_sunday(body.get("premium_sunday")),
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     await db.meal_settings.update_one({"business_id": biz_id}, {"$set": update_doc}, upsert=True)
     await db.meal_reminder_logs.delete_many({"business_id": biz_id, "date": get_today_date()})
     return {"ok": True, "meal_settings": update_doc}
+
+
+# ---------------------------------------------------------------------------
+# Admin mess controls: college holiday mode + mess closure
+# ---------------------------------------------------------------------------
+
+async def load_mess_controls(biz_id: str) -> dict:
+    """Current college-holiday and mess-closure state for a business."""
+    doc = await db.meal_settings.find_one(
+        {"business_id": biz_id},
+        {"_id": 0, "college_holiday": 1, "mess_closure": 1}
+    ) or {}
+    holiday = doc.get("college_holiday")
+    closure = doc.get("mess_closure")
+    return {
+        "college_holiday": holiday if isinstance(holiday, dict) else dict(DEFAULT_COLLEGE_HOLIDAY),
+        "mess_closure": closure if isinstance(closure, dict) else dict(DEFAULT_MESS_CLOSURE),
+    }
+
+
+@api_router.get("/mess-controls")
+async def get_mess_controls(admin: dict = Depends(get_current_admin)):
+    biz_id = admin["business_id"]
+    controls = await load_mess_controls(biz_id)
+    today = get_today_date()
+    controls["today"] = today
+    controls["closed_today"] = {
+        slot: get_mess_closure_status(controls["mess_closure"], slot, today)
+        for slot in ALL_MEAL_SLOTS
+    }
+    return controls
+
+
+@api_router.post("/mess-controls/college-holiday")
+async def set_college_holiday(body: dict = Body(...), admin: dict = Depends(get_current_admin)):
+    """Toggle college holiday mode. While ON, the 45-day subscription validity is frozen —
+    a student's plan then ends only when the meal quota runs out."""
+    biz_id = admin["business_id"]
+    activate = bool(body.get("is_active"))
+    reason = str(body.get("reason") or "").strip()[:200]
+    today = get_today_date()
+
+    controls = await load_mess_controls(biz_id)
+    holiday = controls["college_holiday"]
+    history = [p for p in (holiday.get("history") or []) if isinstance(p, dict)]
+    was_active = bool(holiday.get("is_active"))
+
+    if activate:
+        if was_active:
+            # Already on — only refresh the label
+            holiday["reason"] = reason or holiday.get("reason") or "College holiday"
+        else:
+            holiday = {
+                "is_active": True,
+                "start_date": str(body.get("start_date") or today).strip() or today,
+                "end_date": "",
+                "reason": reason or "College holiday — subscription validity paused",
+                "history": history,
+            }
+    else:
+        if was_active:
+            start = (holiday.get("start_date") or today).strip()
+            end = today
+            if start <= end:
+                history = history + [{
+                    "start_date": start,
+                    "end_date": end,
+                    "reason": holiday.get("reason") or "College holiday",
+                }]
+        holiday = {
+            "is_active": False,
+            "start_date": "",
+            "end_date": "",
+            "reason": "",
+            "history": history,
+        }
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.meal_settings.update_one(
+        {"business_id": biz_id},
+        {"$set": {"business_id": biz_id, "college_holiday": holiday, "updated_at": now_iso}},
+        upsert=True
+    )
+
+    paused_days = count_period_days(holiday, "1970-01-01", today)
+
+    if activate != was_active:
+        title = "🏫 College Holiday Mode ON" if activate else "🏫 College Holiday Mode OFF"
+        msg = (
+            "Your subscription validity is paused during the college holiday. Unused meals stay safe — "
+            "your plan will now end only when your meal quota is finished."
+            if activate else
+            "College holiday has ended. Normal 45-day subscription validity has resumed (holiday days were not counted)."
+        )
+        await db.activity_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "business_id": biz_id,
+            "worker_id": None,
+            "worker_name": "Admin",
+            "type": "COLLEGE_HOLIDAY_TOGGLED",
+            "title": f"{title} {('(' + reason + ')') if reason else ''}".strip(),
+            "created_at": now_iso,
+        })
+        asyncio.create_task(deliver_student_slots_push(
+            business_id=biz_id,
+            slots=ALL_MEAL_SLOTS,
+            title=title,
+            body=msg,
+            url="/worker",
+            tag="college-holiday",
+        ))
+
+    return {"ok": True, "college_holiday": holiday, "paused_days": paused_days}
+
+
+@api_router.post("/mess-controls/mess-closure")
+async def set_mess_closure(body: dict = Body(...), admin: dict = Depends(get_current_admin)):
+    """Close the mess for lunch, dinner or both — for a single day or a date range.
+    Students are push-notified and their meal-selection portal is cut off for that window."""
+    biz_id = admin["business_id"]
+    activate = bool(body.get("is_active"))
+    today = get_today_date()
+
+    controls = await load_mess_controls(biz_id)
+    closure = controls["mess_closure"]
+    history = [p for p in (closure.get("history") or []) if isinstance(p, dict)]
+    was_active = bool(closure.get("is_active"))
+
+    if activate:
+        # Reject unrecognized slot tokens instead of letting them fall through to the
+        # "empty -> both" default: a single typo would otherwise silently close the whole
+        # mess, blocking a slot the admin meant to keep open and freeing its quota.
+        raw_slots = body.get("slots")
+        raw_slots = [raw_slots] if isinstance(raw_slots, str) else (raw_slots or [])
+        bad_slots = [str(s) for s in raw_slots if str(s).strip().lower() not in ALL_MEAL_SLOTS + ["both"]]
+        if bad_slots:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid meal slot(s): {', '.join(bad_slots)}. Use 'lunch', 'dinner' or 'both'."
+            )
+        slots = normalize_closure_slots(raw_slots)
+        start_date = str(body.get("start_date") or today).strip() or today
+        end_date = str(body.get("end_date") or "").strip()
+        days_raw = body.get("days")
+
+        for label, value in (("start_date", start_date), ("end_date", end_date)):
+            if value:
+                try:
+                    datetime.strptime(value, "%Y-%m-%d")
+                except ValueError:
+                    raise HTTPException(status_code=422, detail=f"Invalid {label}. Use YYYY-MM-DD.")
+
+        # "band karo N dino ke liye" — derive the end date from a day count
+        if not end_date and days_raw not in (None, ""):
+            try:
+                num_days = int(days_raw)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail="Number of days must be a whole number.")
+            if num_days < 1 or num_days > 180:
+                raise HTTPException(status_code=422, detail="Number of days must be between 1 and 180.")
+            end_date = (datetime.strptime(start_date, "%Y-%m-%d") + timedelta(days=num_days - 1)).strftime("%Y-%m-%d")
+
+        if not end_date:
+            end_date = start_date
+        if end_date < start_date:
+            raise HTTPException(status_code=422, detail="End date cannot be before the start date.")
+
+        reason = str(body.get("reason") or "").strip()[:200] or "Mess closed by admin"
+
+        # Archive the previous closure so past dates keep their closed status
+        if was_active and (closure.get("start_date") or ""):
+            prev_end = (closure.get("end_date") or "").strip() or today
+            history = history + [{
+                "start_date": closure.get("start_date"),
+                "end_date": min(prev_end, today),
+                "slots": normalize_closure_slots(closure.get("slots")),
+                "reason": closure.get("reason") or "Mess closed by admin",
+            }]
+
+        closure = {
+            "is_active": True,
+            "slots": slots,
+            "start_date": start_date,
+            "end_date": end_date,
+            "reason": reason,
+            "history": history,
+        }
+    else:
+        if was_active and (closure.get("start_date") or ""):
+            start = closure.get("start_date")
+            # Cut the closure short at today so future dates reopen, but keep the past accurate
+            end = min((closure.get("end_date") or today), today)
+            if start <= end:
+                history = history + [{
+                    "start_date": start,
+                    "end_date": end,
+                    "slots": normalize_closure_slots(closure.get("slots")),
+                    "reason": closure.get("reason") or "Mess closed by admin",
+                }]
+        closure = {
+            "is_active": False,
+            "slots": [],
+            "start_date": "",
+            "end_date": "",
+            "reason": "",
+            "history": history,
+        }
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.meal_settings.update_one(
+        {"business_id": biz_id},
+        {"$set": {"business_id": biz_id, "mess_closure": closure, "updated_at": now_iso}},
+        upsert=True
+    )
+    # Reminder pushes for a closed slot would be misleading
+    await db.meal_reminder_logs.delete_many({"business_id": biz_id, "date": today})
+
+    if activate:
+        slot_label = " & ".join(s.capitalize() for s in closure["slots"])
+        span = closure["start_date"] if closure["start_date"] == closure["end_date"] else f"{closure['start_date']} → {closure['end_date']}"
+        title = f"🚫 Mess Closed: {slot_label}"
+        msg = f"{slot_label} service is closed ({span}). Reason: {closure['reason']}. Meal selection is disabled and these meals will not be deducted from your quota."
+        act_title = f"🚫 Admin closed {slot_label} ({span}) — {closure['reason']}"
+    else:
+        title = "✅ Mess Reopened"
+        msg = "The mess is open again. You can choose or cancel your meals as usual."
+        act_title = "✅ Admin reopened the mess (closure cancelled)"
+
+    await db.activity_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "business_id": biz_id,
+        "worker_id": None,
+        "worker_name": "Admin",
+        "type": "MESS_CLOSURE_UPDATED",
+        "title": act_title,
+        "created_at": now_iso,
+    })
+    asyncio.create_task(deliver_student_slots_push(
+        business_id=biz_id,
+        slots=closure["slots"] or ALL_MEAL_SLOTS,
+        title=title,
+        body=msg,
+        url="/worker",
+        tag="mess-closure",
+    ))
+
+    return {
+        "ok": True,
+        "mess_closure": closure,
+        "closed_today": {slot: get_mess_closure_status(closure, slot, today) for slot in ALL_MEAL_SLOTS},
+    }
+
 
 
 @api_router.get("/meal-headcount")
@@ -4484,6 +5161,27 @@ async def get_meal_headcount(
         "premium_options": day_data.get("premium_options", [])
     }
 
+    closure_cfg = (menu_doc or {}).get("mess_closure")
+    closure_cfg = closure_cfg if isinstance(closure_cfg, dict) else {}
+    holiday_cfg = (menu_doc or {}).get("college_holiday")
+    holiday_cfg = holiday_cfg if isinstance(holiday_cfg, dict) else {}
+
+    is_sunday = day_key == "sunday"
+    if is_sunday:
+        lunch_menu = {
+            **lunch_menu,
+            "premium_options": sunday_lunch_premium_options(menu_doc),
+            "is_sunday_special": True,
+        }
+        dinner_menu = {
+            **dinner_menu,
+            "premium_options": (menu_doc.get("premium_items") or DEFAULT_PREMIUM_ITEMS),
+            "is_sunday_special": False,
+        }
+    else:
+        lunch_menu["premium_options"] = (menu_doc.get("premium_items") or DEFAULT_PREMIUM_ITEMS)
+        dinner_menu["premium_options"] = (menu_doc.get("premium_items") or DEFAULT_PREMIUM_ITEMS)
+
     students = await db.workers.find({"business_id": biz_id, "status": "ACTIVE"}, {"_id": 0}).to_list(500)
     selections = await db.meal_selections.find({"business_id": biz_id, "date": date}, {"_id": 0}).to_list(1000)
     active_leaves = await db.worker_leaves.find({
@@ -4501,7 +5199,9 @@ async def get_meal_headcount(
         selections_map[(s["worker_id"], slot)] = s
 
     def compute_slot_stats(slot_key: str, slot_menu: dict):
-        is_closed = slot_menu.get("is_closed", False)
+        closure_status = get_mess_closure_status(closure_cfg, slot_key, date)
+        is_mess_closed = closure_status["is_closed"]
+        is_closed = bool(slot_menu.get("is_closed", False)) or is_mess_closed
         standard_mode = slot_menu.get("standard_mode", "VEG_ONLY")
 
         total_veg = 0
@@ -4561,7 +5261,7 @@ async def get_meal_headcount(
             elif is_closed:
                 is_cancelled = True
                 effective_choice = "CLOSED"
-                choice_detail = "Kitchen Closed / Holiday"
+                choice_detail = closure_status["reason"] if is_mess_closed else "Kitchen Closed / Holiday"
             elif sel and (sel.get("selection_type") == "CANCELLED" or sel.get("action") == "CANCEL"):
                 is_cancelled = True
                 effective_choice = "CANCELLED"
@@ -4577,7 +5277,18 @@ async def get_meal_headcount(
                     total_dine_in += 1
 
                 if plan.lower() == "premium":
-                    if sel and sel.get("selected_item_name"):
+                    if is_sunday and slot_key == "lunch":
+                        sun_opts = slot_menu.get("premium_options") or []
+                        veg_opt = next((o for o in sun_opts if o.get("type") == "VEG"), None) or (sun_opts[0] if len(sun_opts) > 0 else {})
+                        non_veg_opt = next((o for o in sun_opts if o.get("type") == "NON_VEG"), None) or (sun_opts[1] if len(sun_opts) > 1 else veg_opt)
+                        if sel and sel.get("selected_item_name"):
+                            effective_choice = "PREMIUM"
+                            choice_detail = sel["selected_item_name"]
+                        else:
+                            default_dish = non_veg_opt if default_pref == "NON_VEG" else veg_opt
+                            effective_choice = "PREMIUM"
+                            choice_detail = default_dish.get("name", "Sunday Biryani Special")
+                    elif sel and sel.get("selected_item_name"):
                         effective_choice = "PREMIUM"
                         choice_detail = sel["selected_item_name"]
                     else:
@@ -4619,10 +5330,14 @@ async def get_meal_headcount(
                 "is_customized": is_customized,
             })
 
-        window_status = check_meal_slot_window(slot_key, windows, slot_menu, date)
+        window_status = check_meal_slot_window(slot_key, windows, slot_menu, date, closure_cfg)
         return {
             "slot": slot_key,
             "is_closed": is_closed,
+            "is_mess_closed": is_mess_closed,
+            "mess_closure": closure_status,
+            "is_premium_fixed": False,
+            "is_sunday_special": is_sunday and slot_key == "lunch",
             "window": window_status,
             "menu": slot_menu,
             "summary": {
@@ -4648,6 +5363,10 @@ async def get_meal_headcount(
         "date": date,
         "day_name": day_data.get("day_name", dt.strftime("%A")),
         "windows": windows,
+        "college_holiday": holiday_cfg,
+        "mess_closure": closure_cfg,
+        "is_premium_fixed_day": False,
+        "is_sunday": is_sunday,
         "lunch": lunch_stats,
         "dinner": dinner_stats,
     }
@@ -4696,8 +5415,20 @@ async def get_student_today_meal(
     if not global_premium_items:
         global_premium_items = DEFAULT_PREMIUM_ITEMS
 
-    lunch_menu["premium_options"] = global_premium_items
-    dinner_menu["premium_options"] = global_premium_items
+    closure_cfg = (menu_doc or {}).get("mess_closure")
+    closure_cfg = closure_cfg if isinstance(closure_cfg, dict) else {}
+    holiday_cfg = (menu_doc or {}).get("college_holiday")
+    holiday_cfg = holiday_cfg if isinstance(holiday_cfg, dict) else {}
+
+    is_sunday = day_key == "sunday"
+    if is_sunday:
+        lunch_menu["premium_options"] = sunday_lunch_premium_options(menu_doc)
+        lunch_menu["is_sunday_special"] = True
+        dinner_menu["premium_options"] = global_premium_items
+        dinner_menu["is_sunday_special"] = False
+    else:
+        lunch_menu["premium_options"] = global_premium_items
+        dinner_menu["premium_options"] = global_premium_items
 
     selections = await db.meal_selections.find({"business_id": biz_id, "worker_id": wid, "date": target_date}, {"_id": 0}).to_list(10)
     selections_map = {(s.get("meal_slot") or "lunch").lower(): s for s in selections}
@@ -4725,8 +5456,10 @@ async def get_student_today_meal(
             is_plan_included = False
 
         selection = selections_map.get(slot_key)
-        window_status = check_meal_slot_window(slot_key, windows, slot_menu, target_date)
-        is_closed = slot_menu.get("is_closed", False)
+        window_status = check_meal_slot_window(slot_key, windows, slot_menu, target_date, closure_cfg)
+        closure_status = get_mess_closure_status(closure_cfg, slot_key, target_date)
+        is_mess_closed = closure_status["is_closed"]
+        is_closed = bool(slot_menu.get("is_closed", False)) or is_mess_closed
         standard_mode = slot_menu.get("standard_mode", "VEG_ONLY")
 
         is_cancelled = False
@@ -4754,20 +5487,33 @@ async def get_student_today_meal(
             selected_item_name = "On Vacation / Home Leave"
         elif is_closed:
             is_cancelled = True
-            effective_choice = "CLOSED"
-            selected_item_name = "Kitchen Closed / Holiday"
+            effective_choice = "MESS_CLOSED" if is_mess_closed else "CLOSED"
+            selected_item_name = closure_status["reason"] if is_mess_closed else "Kitchen Closed / Holiday"
         elif selection and (selection.get("selection_type") == "CANCELLED" or selection.get("action") == "CANCEL"):
             is_cancelled = True
             effective_choice = "CANCELLED"
             selected_item_name = "Cancelled (Not Eating)"
         else:
             if plan.lower() == "premium":
-                if selection and selection.get("selected_item_name"):
+                options = slot_menu.get("premium_options") or []
+                if is_sunday and slot_key == "lunch" and options:
+                    veg_opt = next((o for o in options if o.get("type") == "VEG"), options[0])
+                    non_veg_opt = next((o for o in options if o.get("type") == "NON_VEG"), options[-1])
+                    if selection and selection.get("selected_item_name"):
+                        effective_choice = "PREMIUM_ITEM"
+                        selected_item_id = selection.get("selected_item_id", "")
+                        selected_item_name = selection.get("selected_item_name", "")
+                    else:
+                        default_dish = non_veg_opt if default_pref == "NON_VEG" else veg_opt
+                        effective_choice = "PREMIUM_ITEM"
+                        selected_item_id = default_dish.get("id", "")
+                        selected_item_name = default_dish.get("name", "")
+                elif selection and selection.get("selected_item_name"):
                     effective_choice = "PREMIUM_ITEM"
                     selected_item_id = selection.get("selected_item_id", "")
                     selected_item_name = selection.get("selected_item_name", "")
                 else:
-                    first_opt = (slot_menu.get("premium_options") or [{}])[0]
+                    first_opt = (options or [{}])[0]
                     effective_choice = "PREMIUM_ITEM"
                     selected_item_id = first_opt.get("id", "")
                     selected_item_name = first_opt.get("name", "")
@@ -4789,6 +5535,10 @@ async def get_student_today_meal(
         return {
             "slot": slot_key,
             "is_closed": is_closed,
+            "is_mess_closed": is_mess_closed,
+            "mess_closure": closure_status,
+            "is_premium_fixed": False,
+            "is_sunday_special": is_sunday and slot_key == "lunch",
             "is_plan_included": is_plan_included,
             "is_on_leave": is_on_leave,
             "leave_info": active_leave if is_on_leave else None,
@@ -4819,6 +5569,20 @@ async def get_student_today_meal(
         "is_on_leave": bool(active_leave),
         "active_leave": active_leave,
         "subscription_stats": stats,
+        "college_holiday": {
+            "is_active": bool(holiday_cfg.get("is_active")),
+            "reason": holiday_cfg.get("reason") or "",
+            "start_date": holiday_cfg.get("start_date") or "",
+        },
+        "mess_closure": {
+            "is_active": bool(closure_cfg.get("is_active")),
+            "slots": normalize_closure_slots(closure_cfg.get("slots")) if closure_cfg.get("is_active") else [],
+            "start_date": closure_cfg.get("start_date") or "",
+            "end_date": closure_cfg.get("end_date") or "",
+            "reason": closure_cfg.get("reason") or "",
+        },
+        "is_premium_fixed_day": False,
+        "is_sunday": is_sunday,
         "lunch": process_student_slot("lunch", lunch_menu),
         "dinner": process_student_slot("dinner", dinner_menu),
     }
@@ -4862,13 +5626,14 @@ async def save_student_meal_selection(
     if meal_plan_type == "DINNER_ONLY" and slot_key == "lunch":
         raise HTTPException(status_code=400, detail="Your subscription only includes Dinner service.")
 
-    # 45-Day Subscription Validity and Quota Exhaustion Check
+    # Subscription Validity and Quota Exhaustion Check.
+    # Validity is frozen while the admin has college holiday mode ON — only quota matters then.
     stats = await compute_worker_meal_consumption(biz_id, worker)
     if action != "CANCEL":
         if stats.get("is_validity_expired"):
             raise HTTPException(
                 status_code=403,
-                detail=f"Your subscription validity has expired (45-day validity period ended on {stats.get('validity_expiry_date')}). Please renew your subscription to order meals."
+                detail=f"Your subscription validity has expired ({stats.get('validity_days', 45)}-day validity period ended on {stats.get('validity_expiry_date')}). Please renew your subscription to order meals."
             )
         if stats.get("total_remaining") == 0:
             raise HTTPException(
@@ -4896,8 +5661,20 @@ async def save_student_meal_selection(
     day_key = dt.strftime("%A").lower()
     day_data = days.get(day_key, {})
     slot_menu = day_data.get(slot_key, {})
-    
-    window_check = check_meal_slot_window(slot_key, windows, slot_menu, target_date)
+
+    closure_cfg = (menu_doc or {}).get("mess_closure")
+    closure_cfg = closure_cfg if isinstance(closure_cfg, dict) else {}
+    closure_status = get_mess_closure_status(closure_cfg, slot_key, target_date)
+    if closure_status["is_closed"]:
+        span = closure_status["start_date"]
+        if closure_status["end_date"]:
+            span = f"{closure_status['start_date']} to {closure_status['end_date']}"
+        raise HTTPException(
+            status_code=403,
+            detail=f"The mess is closed for {slot_key.capitalize()} ({span}). {closure_status['reason']}. This meal will not be deducted from your quota."
+        )
+
+    window_check = check_meal_slot_window(slot_key, windows, slot_menu, target_date, closure_cfg)
     if not window_check.get("is_open", False):
         raise HTTPException(
             status_code=400,
@@ -5006,6 +5783,8 @@ if _cors_origins.strip() == '*':
         _vercel_origin,
         "http://localhost:3000",
         "http://localhost:3001",
+        "http://localhost:3002",
+        "http://localhost:3003",
     ]
     if _frontend_url and _frontend_url not in _allow_origins:
         _allow_origins.insert(0, _frontend_url)
@@ -5181,22 +5960,14 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    if _voice_expiration_task:
-        _voice_expiration_task.cancel()
-        try:
-            await _voice_expiration_task
-        except asyncio.CancelledError:
-            pass
-    if _meal_cleanup_task:
-        _meal_cleanup_task.cancel()
-        try:
-            await _meal_cleanup_task
-        except asyncio.CancelledError:
-            pass
-    if _meal_reminder_task:
-        _meal_reminder_task.cancel()
-        try:
-            await _meal_reminder_task
-        except asyncio.CancelledError:
-            pass
-    client.close()
+    for task in [_voice_expiration_task, _meal_cleanup_task, _meal_reminder_task]:
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+    try:
+        client.close()
+    except Exception:
+        pass

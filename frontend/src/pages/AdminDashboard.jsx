@@ -1220,7 +1220,7 @@ function OverviewSection({ workers, admin, onNavigate }) {
                         <span className="bg-rose-600 text-white text-[9px] font-bold px-1.5 py-0.2 rounded">
                           0 Meals Left
                         </span>
-                      ) : item.validity_days_left <= 5 ? (
+                      ) : item.validity_days_left <= 5 && !item.stats?.holiday_mode_active ? (
                         <span className="bg-amber-400 text-slate-950 text-[9px] font-bold px-1.5 py-0.2 rounded">
                           {item.validity_days_left}d validity left
                         </span>
@@ -3230,6 +3230,73 @@ function MessagesSection({ workers, admin, onUnreadChange }) {
   const { listRef: messageListRef, onScroll: handleMessageScroll, scrollAfterSend } = useSmartChatScroll(messages, activeConv?.conversation_id);
   const inputRef = useRef(null);
 
+  // Broadcast Message State
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [broadcastMode, setBroadcastMode] = useState("ALL"); // ALL | SELECTED | PREMIUM | STANDARD
+  const [selectedWorkerIds, setSelectedWorkerIds] = useState([]);
+  const [broadcastText, setBroadcastText] = useState("");
+  const [broadcastSending, setBroadcastSending] = useState(false);
+  const [studentSearch, setStudentSearch] = useState("");
+
+  const activeStudents = useMemo(() => {
+    return (workers || []).filter((w) => w.status !== "INACTIVE");
+  }, [workers]);
+
+  const targetStudentsCount = useMemo(() => {
+    if (broadcastMode === "PREMIUM") return activeStudents.filter((w) => (w.work_type || "").toLowerCase() === "premium").length;
+    if (broadcastMode === "STANDARD") return activeStudents.filter((w) => (w.work_type || "").toLowerCase() !== "premium").length;
+    if (broadcastMode === "SELECTED") return selectedWorkerIds.length;
+    return activeStudents.length;
+  }, [activeStudents, broadcastMode, selectedWorkerIds]);
+
+  const filteredSelectableStudents = useMemo(() => {
+    if (!studentSearch.trim()) return activeStudents;
+    const q = studentSearch.toLowerCase();
+    return activeStudents.filter((w) => (w.name || "").toLowerCase().includes(q) || (w.login_id || "").toLowerCase().includes(q) || (w.mobile || "").includes(q));
+  }, [activeStudents, studentSearch]);
+
+  const toggleSelectStudent = (id) => {
+    setSelectedWorkerIds((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]);
+  };
+
+  const selectAllStudents = () => {
+    setSelectedWorkerIds(activeStudents.map((w) => w.id));
+  };
+
+  const deselectAllStudents = () => {
+    setSelectedWorkerIds([]);
+  };
+
+  const handleSendBroadcast = async (e) => {
+    e?.preventDefault();
+    if (!broadcastText.trim()) {
+      toast.error("Please enter a message to broadcast");
+      return;
+    }
+    if (broadcastMode === "SELECTED" && selectedWorkerIds.length === 0) {
+      toast.error("Please select at least one student");
+      return;
+    }
+
+    setBroadcastSending(true);
+    try {
+      const res = await adminApi.post("/chat/broadcast", {
+        recipient_mode: broadcastMode,
+        worker_ids: broadcastMode === "SELECTED" ? selectedWorkerIds : [],
+        text: broadcastText.trim(),
+      });
+      toast.success(`📢 Broadcast message sent to ${res.data.sent_count} student(s) successfully!`);
+      setBroadcastOpen(false);
+      setBroadcastText("");
+      await loadConversations();
+      if (activeConv) await loadMessages();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setBroadcastSending(false);
+    }
+  };
+
   const loadConversations = useCallback(async () => {
     const requestId = ++conversationsRequestRef.current;
     try {
@@ -3371,8 +3438,23 @@ function MessagesSection({ workers, admin, onUnreadChange }) {
               </div>
               <span className="font-display font-bold text-white text-base">Kitchen Messages</span>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
               <button
+                type="button"
+                onClick={() => {
+                  setBroadcastText("");
+                  setBroadcastMode("ALL");
+                  setSelectedWorkerIds(activeStudents.map((w) => w.id));
+                  setBroadcastOpen(true);
+                }}
+                className="h-8 px-3 rounded-full bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                title="Send broadcast message to all or selected students"
+              >
+                <Megaphone className="h-3.5 w-3.5 text-slate-950" />
+                <span>Broadcast</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => loadConversations()}
                 className="h-8 w-8 rounded-full hover:bg-white/10 flex items-center justify-center text-teal-200 hover:text-white transition-colors"
                 title="Refresh"
@@ -3680,6 +3762,229 @@ function MessagesSection({ workers, admin, onUnreadChange }) {
           )}
         </div>
       </div>
+
+      {/* 📢 Broadcast Message Modal */}
+      {broadcastOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-white border border-stone-200 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="bg-[#102f2c] px-6 py-4 flex items-center justify-between text-white shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-2xl bg-amber-400 text-slate-950 flex items-center justify-center font-bold shadow-md">
+                  <Megaphone className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-lg leading-tight">Send Broadcast Message</h3>
+                  <p className="text-xs text-teal-200">Send an instant notice to all or selected students</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBroadcastOpen(false)}
+                className="p-1.5 rounded-full text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <form onSubmit={handleSendBroadcast} className="p-6 space-y-4 overflow-y-auto flex-1 flex flex-col">
+              {/* 1. Recipient Target Mode */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-slate-700">Choose Recipients</Label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBroadcastMode("ALL")}
+                    className={`p-2.5 rounded-2xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all ${
+                      broadcastMode === "ALL"
+                        ? "bg-[#102f2c] text-white border-[#102f2c] shadow-xs"
+                        : "bg-stone-50 border-stone-200 text-slate-700 hover:bg-stone-100"
+                    }`}
+                  >
+                    <span>👥 All Students</span>
+                    <span className="text-[10px] opacity-80">({activeStudents.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setBroadcastMode("PREMIUM")}
+                    className={`p-2.5 rounded-2xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all ${
+                      broadcastMode === "PREMIUM"
+                        ? "bg-amber-500 text-slate-950 border-amber-500 shadow-xs"
+                        : "bg-stone-50 border-stone-200 text-slate-700 hover:bg-stone-100"
+                    }`}
+                  >
+                    <span>⭐ Premium</span>
+                    <span className="text-[10px] opacity-80">
+                      ({activeStudents.filter((w) => (w.work_type || "").toLowerCase() === "premium").length})
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setBroadcastMode("STANDARD")}
+                    className={`p-2.5 rounded-2xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all ${
+                      broadcastMode === "STANDARD"
+                        ? "bg-teal-800 text-white border-teal-800 shadow-xs"
+                        : "bg-stone-50 border-stone-200 text-slate-700 hover:bg-stone-100"
+                    }`}
+                  >
+                    <span>🍚 Standard</span>
+                    <span className="text-[10px] opacity-80">
+                      ({activeStudents.filter((w) => (w.work_type || "").toLowerCase() !== "premium").length})
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setBroadcastMode("SELECTED")}
+                    className={`p-2.5 rounded-2xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all ${
+                      broadcastMode === "SELECTED"
+                        ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                        : "bg-stone-50 border-stone-200 text-slate-700 hover:bg-stone-100"
+                    }`}
+                  >
+                    <span>🎯 Selected</span>
+                    <span className="text-[10px] opacity-80">({selectedWorkerIds.length})</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Multi-select student list (if SELECTED mode) */}
+              {broadcastMode === "SELECTED" && (
+                <div className="rounded-2xl border border-stone-200 bg-stone-50 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Search by name, ID or mobile..."
+                        value={studentSearch}
+                        onChange={(e) => setStudentSearch(e.target.value)}
+                        className="w-full bg-white border border-stone-200 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-800 outline-none"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={selectAllStudents}
+                      className="text-[11px] font-bold text-teal-800 hover:underline px-1.5"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={deselectAllStudents}
+                      className="text-[11px] font-bold text-slate-500 hover:underline px-1.5"
+                    >
+                      Clear
+                    </button>
+                  </div>
+
+                  <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
+                    {filteredSelectableStudents.map((w) => {
+                      const isSelected = selectedWorkerIds.includes(w.id);
+                      return (
+                        <div
+                          key={w.id}
+                          onClick={() => toggleSelectStudent(w.id)}
+                          className={`p-2 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                            isSelected
+                              ? "bg-indigo-50 border-indigo-300 text-indigo-950 font-bold"
+                              : "bg-white border-stone-200 text-slate-700 hover:bg-stone-100"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <WorkerAvatar worker={w} className="h-6 w-6 text-[10px]" />
+                            <span className="text-xs truncate">{w.name}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">({w.login_id || w.mobile || "ID"})</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                              (w.work_type || "").toLowerCase() === "premium"
+                                ? "bg-amber-100 text-amber-800"
+                                : "bg-teal-100 text-teal-800"
+                            }`}>
+                              {w.work_type || "Standard"}
+                            </span>
+                            <div className={`h-4 w-4 rounded flex items-center justify-center ${
+                              isSelected ? "bg-indigo-600 text-white" : "border border-stone-300 bg-white"
+                            }`}>
+                              {isSelected && <Check className="h-3 w-3" />}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Template Chips */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-slate-700">Quick Templates</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    "📢 Today's meal menu has been updated! Please check and confirm your choice.",
+                    "⏰ Reminder: Lunch cutoff window closes soon. Mark your preference now!",
+                    "🎉 Special Sunday Biryani Feast today! Veg & Non-Veg options available.",
+                    "⚠️ Notice: Kitchen timing update for today.",
+                  ].map((tpl, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setBroadcastText(tpl)}
+                      className="text-[11px] bg-stone-100 hover:bg-amber-100 text-slate-700 hover:text-amber-900 border border-stone-200 rounded-xl px-2.5 py-1 text-left transition-colors"
+                    >
+                      {tpl.slice(0, 36)}...
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Message Textarea */}
+              <div className="space-y-1.5 flex-1 flex flex-col">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-bold text-slate-700">Message Content</Label>
+                  <span className="text-[10px] text-slate-400">{broadcastText.length}/4000</span>
+                </div>
+                <textarea
+                  required
+                  rows={4}
+                  placeholder="Type the message you want to broadcast..."
+                  value={broadcastText}
+                  onChange={(e) => setBroadcastText(e.target.value)}
+                  className="w-full rounded-2xl border border-stone-200 p-3 text-sm text-slate-800 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700 resize-none flex-1"
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-2 pt-2 border-t border-stone-100">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setBroadcastOpen(false)}
+                  className="flex-1 rounded-2xl font-bold text-xs h-11 border-stone-200"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={broadcastSending || !broadcastText.trim() || targetStudentsCount === 0}
+                  className="flex-2 bg-[#102f2c] hover:bg-teal-900 text-white rounded-2xl font-bold text-xs h-11 shadow-md gap-2"
+                >
+                  {broadcastSending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4 text-amber-300" />
+                  )}
+                  Send Broadcast to {targetStudentsCount} Student{targetStudentsCount !== 1 ? "s" : ""}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3708,12 +4013,24 @@ function MealMenuSection({ workers }) {
     dinner: { start_time: "16:00", end_time: "19:00", is_enabled: true },
   });
   const [premiumItems, setPremiumItems] = useState([]);
+  const [premiumSunday, setPremiumSunday] = useState({
+    lunch_veg: { name: "", type: "VEG", description: "" },
+    lunch_non_veg: { name: "", type: "NON_VEG", description: "" },
+  });
   const [menuLoading, setMenuLoading] = useState(true);
   const [savingMenu, setSavingMenu] = useState(false);
 
   const [newPremiumName, setNewPremiumName] = useState("");
   const [newPremiumType, setNewPremiumType] = useState("NON_VEG");
   const [newPremiumDesc, setNewPremiumDesc] = useState("");
+
+  // College holiday mode + mess closure controls (separate /mess-controls endpoints)
+  const [collegeHoliday, setCollegeHoliday] = useState({ is_active: false, reason: "", start_date: "", history: [] });
+  const [messClosure, setMessClosure] = useState({ is_active: false, slots: [], start_date: "", end_date: "", reason: "", history: [] });
+  const [holidaySaving, setHolidaySaving] = useState(false);
+  const [closureSaving, setClosureSaving] = useState(false);
+  const [holidayReasonInput, setHolidayReasonInput] = useState("");
+  const [closureForm, setClosureForm] = useState({ slots: "both", mode: "days", days: "1", start_date: "", end_date: "", reason: "" });
 
   const loadMenu = useCallback(async () => {
     setMenuLoading(true);
@@ -3722,6 +4039,13 @@ function MealMenuSection({ workers }) {
       setMenuConfig(res.data.days || {});
       if (res.data.windows) setWindowsConfig(res.data.windows);
       setPremiumItems(res.data.premium_items || []);
+      if (res.data.premium_sunday) {
+        const raw = res.data.premium_sunday;
+        setPremiumSunday({
+          lunch_veg: raw.lunch_veg || { name: "🥦 Special Sunday Veg Paneer Dum Biryani", type: "VEG", description: "Hyderabadi spiced Veg & Paneer Dum Biryani, Mirchi Ka Salan, Boondi Raita, Gulab Jamun" },
+          lunch_non_veg: raw.lunch_non_veg || { name: "🍗 Special Sunday Chicken Dum Biryani", type: "NON_VEG", description: "Hyderabadi Chicken Dum Biryani, Mirchi Ka Salan, Boondi Raita, Gulab Jamun" },
+        });
+      }
     } catch (e) {
       toast.error(apiError(e));
     } finally {
@@ -3729,9 +4053,68 @@ function MealMenuSection({ workers }) {
     }
   }, []);
 
+  const loadMessControls = useCallback(async () => {
+    try {
+      const res = await adminApi.get("/mess-controls");
+      if (res.data.college_holiday) setCollegeHoliday(res.data.college_holiday);
+      if (res.data.mess_closure) setMessClosure(res.data.mess_closure);
+    } catch (e) {
+      // Non-fatal — controls just stay at defaults
+      console.warn("Failed to load mess controls", e);
+    }
+  }, []);
+
   useEffect(() => {
     loadMenu();
-  }, [loadMenu]);
+    loadMessControls();
+  }, [loadMenu, loadMessControls]);
+
+  const handleToggleCollegeHoliday = async (nextActive) => {
+    setHolidaySaving(true);
+    try {
+      const res = await adminApi.post("/mess-controls/college-holiday", {
+        is_active: nextActive,
+        reason: holidayReasonInput.trim(),
+      });
+      if (res.data.college_holiday) setCollegeHoliday(res.data.college_holiday);
+      toast.success(
+        nextActive
+          ? "College Holiday Mode ON — students' 45-day validity is now paused."
+          : "College Holiday Mode OFF — normal 45-day validity resumed."
+      );
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setHolidaySaving(false);
+    }
+  };
+
+  const handleSetMessClosure = async (activate) => {
+    setClosureSaving(true);
+    try {
+      const payload = activate
+        ? {
+            is_active: true,
+            slots: closureForm.slots,
+            reason: closureForm.reason.trim(),
+            ...(closureForm.mode === "days"
+              ? { start_date: closureForm.start_date || undefined, days: closureForm.days }
+              : { start_date: closureForm.start_date || undefined, end_date: closureForm.end_date || undefined }),
+          }
+        : { is_active: false };
+      const res = await adminApi.post("/mess-controls/mess-closure", payload);
+      if (res.data.mess_closure) setMessClosure(res.data.mess_closure);
+      toast.success(
+        activate
+          ? "Mess closure applied — students notified & portal cut off."
+          : "Mess reopened — students can choose meals again."
+      );
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setClosureSaving(false);
+    }
+  };
 
   const handleSaveMenu = async () => {
     if (!menuConfig) return;
@@ -3741,8 +4124,9 @@ function MealMenuSection({ workers }) {
         days: menuConfig,
         windows: windowsConfig,
         premium_items: premiumItems,
+        premium_sunday: premiumSunday,
       });
-      toast.success("Meal menu, timing windows, and premium items saved permanently!");
+      toast.success("Meal menu, timing windows, premium dishes & Sunday special saved permanently!");
     } catch (e) {
       toast.error(apiError(e));
     } finally {
@@ -3820,6 +4204,178 @@ function MealMenuSection({ workers }) {
           Save All Settings
         </Button>
       </div>
+
+      {/* ⚡ Live Mess Controls — College Holiday + Mess Closure (apply instantly, students notified) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* College Holiday Mode */}
+        <div className={`rounded-3xl p-5 sm:p-6 shadow-sm space-y-4 border-2 transition-colors ${collegeHoliday.is_active ? "border-indigo-400 bg-indigo-50/60" : "border-stone-200 bg-white"}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className={`h-10 w-10 rounded-2xl flex items-center justify-center shrink-0 ${collegeHoliday.is_active ? "bg-indigo-500 text-white" : "bg-indigo-100 text-indigo-700"}`}>
+                <GraduationCap className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="font-display text-base font-extrabold text-slate-900">College Holiday Mode</h3>
+                <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                  Turn ON during college vacation. Students' <strong>45-day validity is paused</strong> — their plan then ends only when the meal quota finishes. Turn OFF to resume normal 45-day counting.
+                </p>
+              </div>
+            </div>
+            <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full shrink-0 ${collegeHoliday.is_active ? "bg-indigo-500 text-white" : "bg-stone-100 text-slate-500"}`}>
+              {collegeHoliday.is_active ? "ON" : "OFF"}
+            </span>
+          </div>
+
+          {!collegeHoliday.is_active && (
+            <Input
+              placeholder="Reason (optional) e.g. Diwali vacation, Semester break"
+              value={holidayReasonInput}
+              onChange={(e) => setHolidayReasonInput(e.target.value)}
+              className="text-xs rounded-xl bg-white"
+            />
+          )}
+
+          {collegeHoliday.is_active && (
+            <div className="rounded-2xl bg-white/70 border border-indigo-200 px-3.5 py-2.5 text-[11px] text-indigo-900">
+              <p className="font-bold">✅ Active{collegeHoliday.start_date ? ` since ${collegeHoliday.start_date}` : ""}</p>
+              {collegeHoliday.reason && <p className="text-indigo-700 mt-0.5">{collegeHoliday.reason}</p>}
+              <p className="text-indigo-600/80 mt-1">Days spent on holiday are added back to every student's validity window.</p>
+            </div>
+          )}
+
+          <Button
+            onClick={() => handleToggleCollegeHoliday(!collegeHoliday.is_active)}
+            disabled={holidaySaving}
+            className={`w-full rounded-2xl font-bold h-11 active:scale-95 transition-transform ${collegeHoliday.is_active ? "bg-slate-800 hover:bg-slate-900 text-white" : "bg-indigo-600 hover:bg-indigo-700 text-white"}`}
+          >
+            {holidaySaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Power className="h-4 w-4 mr-2" />}
+            {collegeHoliday.is_active ? "Turn OFF (resume 45-day validity)" : "Turn ON (pause validity for holiday)"}
+          </Button>
+        </div>
+
+        {/* Mess Closure */}
+        <div className={`rounded-3xl p-5 sm:p-6 shadow-sm space-y-4 border-2 transition-colors ${messClosure.is_active ? "border-rose-400 bg-rose-50/60" : "border-stone-200 bg-white"}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className={`h-10 w-10 rounded-2xl flex items-center justify-center shrink-0 ${messClosure.is_active ? "bg-rose-500 text-white" : "bg-rose-100 text-rose-700"}`}>
+                <CalendarOff className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="font-display text-base font-extrabold text-slate-900">Close the Mess</h3>
+                <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                  Close lunch, dinner or both for a number of days. Students get a <strong>push notification</strong>, their portal is cut off, and those meals are <strong>not deducted</strong> from quota.
+                </p>
+              </div>
+            </div>
+            <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full shrink-0 ${messClosure.is_active ? "bg-rose-500 text-white" : "bg-stone-100 text-slate-500"}`}>
+              {messClosure.is_active ? "CLOSED" : "OPEN"}
+            </span>
+          </div>
+
+          {messClosure.is_active ? (
+            <div className="rounded-2xl bg-white/70 border border-rose-200 px-3.5 py-2.5 text-[11px] text-rose-900 space-y-1">
+              <p className="font-bold">
+                🚫 {(messClosure.slots || []).map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(" & ") || "Lunch & Dinner"} closed
+              </p>
+              <p className="text-rose-700">
+                {messClosure.start_date}{messClosure.end_date && messClosure.end_date !== messClosure.start_date ? ` → ${messClosure.end_date}` : ""}
+              </p>
+              {messClosure.reason && <p className="text-rose-700/90">{messClosure.reason}</p>}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <Label className="text-[11px] font-bold text-slate-700">Which service to close?</Label>
+                <div className="grid grid-cols-3 gap-2 mt-1">
+                  {[
+                    { v: "lunch", l: "☀️ Lunch" },
+                    { v: "dinner", l: "🌙 Dinner" },
+                    { v: "both", l: "Both" },
+                  ].map((o) => (
+                    <button
+                      key={o.v}
+                      type="button"
+                      onClick={() => setClosureForm((f) => ({ ...f, slots: o.v }))}
+                      className={`text-xs font-bold rounded-xl h-9 border transition-all ${closureForm.slots === o.v ? "bg-rose-600 border-rose-600 text-white" : "bg-white border-stone-200 text-slate-600 hover:border-rose-300"}`}
+                    >
+                      {o.l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setClosureForm((f) => ({ ...f, mode: "days" }))}
+                  className={`text-xs font-bold rounded-xl h-9 border transition-all ${closureForm.mode === "days" ? "bg-slate-800 border-slate-800 text-white" : "bg-white border-stone-200 text-slate-600"}`}
+                >
+                  For N days
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setClosureForm((f) => ({ ...f, mode: "range" }))}
+                  className={`text-xs font-bold rounded-xl h-9 border transition-all ${closureForm.mode === "range" ? "bg-slate-800 border-slate-800 text-white" : "bg-white border-stone-200 text-slate-600"}`}
+                >
+                  Date range
+                </button>
+              </div>
+
+              {closureForm.mode === "days" ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label className="text-[10px] font-semibold text-slate-600">Start (blank = today)</Label>
+                    <Input type="date" value={closureForm.start_date} onChange={(e) => setClosureForm((f) => ({ ...f, start_date: e.target.value }))} className="mt-1 text-xs rounded-xl bg-white" />
+                  </div>
+                  <div>
+                    <Label className="text-[10px] font-semibold text-slate-600">Number of days</Label>
+                    <Input type="number" min="1" max="180" value={closureForm.days} onChange={(e) => setClosureForm((f) => ({ ...f, days: e.target.value }))} className="mt-1 text-xs rounded-xl bg-white" />
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label className="text-[10px] font-semibold text-slate-600">Start date</Label>
+                    <Input type="date" value={closureForm.start_date} onChange={(e) => setClosureForm((f) => ({ ...f, start_date: e.target.value }))} className="mt-1 text-xs rounded-xl bg-white" />
+                  </div>
+                  <div>
+                    <Label className="text-[10px] font-semibold text-slate-600">End date</Label>
+                    <Input type="date" value={closureForm.end_date} onChange={(e) => setClosureForm((f) => ({ ...f, end_date: e.target.value }))} className="mt-1 text-xs rounded-xl bg-white" />
+                  </div>
+                </div>
+              )}
+
+              <Input
+                placeholder="Reason (shown to students) e.g. Staff on leave, Kitchen maintenance"
+                value={closureForm.reason}
+                onChange={(e) => setClosureForm((f) => ({ ...f, reason: e.target.value }))}
+                className="text-xs rounded-xl bg-white"
+              />
+            </div>
+          )}
+
+          {messClosure.is_active ? (
+            <Button
+              onClick={() => handleSetMessClosure(false)}
+              disabled={closureSaving}
+              className="w-full rounded-2xl font-bold h-11 bg-emerald-600 hover:bg-emerald-700 text-white active:scale-95 transition-transform"
+            >
+              {closureSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+              Reopen Mess (notify students)
+            </Button>
+          ) : (
+            <Button
+              onClick={() => handleSetMessClosure(true)}
+              disabled={closureSaving}
+              className="w-full rounded-2xl font-bold h-11 bg-rose-600 hover:bg-rose-700 text-white active:scale-95 transition-transform"
+            >
+              {closureSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CalendarOff className="h-4 w-4 mr-2" />}
+              Close Mess & Notify Students
+            </Button>
+          )}
+        </div>
+      </div>
+
 
       {/* 2. Timing Windows & Holiday Settings */}
       <div className="bg-white border border-stone-200 rounded-3xl p-5 sm:p-7 shadow-sm space-y-5">
@@ -4005,6 +4561,66 @@ function MealMenuSection({ workers }) {
               + Add to Menu
             </Button>
           </div>
+        </div>
+
+        {/* ⭐ Premium Sunday Lunch Special (Biryani Day - Veg & Non-Veg) */}
+        <div className="p-4 rounded-2xl border-2 border-amber-400 bg-gradient-to-br from-amber-50 to-orange-50/50 space-y-4">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🍗</span>
+            <div>
+              <h4 className="font-display text-sm font-extrabold text-amber-950">Premium Sunday Lunch Special (Biryani Day)</h4>
+              <p className="text-[11px] text-slate-600 mt-0.5">
+                Sunday lunch special with both Veg and Non-Veg biryani options for premium students (students can choose Veg vs Non-Veg). Sunday dinner follows regular premium menu items.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            {/* 🥦 Sunday Lunch Veg Special */}
+            <div className="rounded-2xl bg-white/80 border border-emerald-300 p-3.5 space-y-2.5 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
+                  🥦 Sunday Lunch Veg Special
+                </span>
+                <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">Veg Option</span>
+              </div>
+              <Input
+                placeholder="Veg dish name (e.g. Special Sunday Veg Paneer Dum Biryani)"
+                value={premiumSunday?.lunch_veg?.name || ""}
+                onChange={(e) => setPremiumSunday((prev) => ({ ...prev, lunch_veg: { ...prev.lunch_veg, name: e.target.value, type: "VEG" } }))}
+                className="text-xs rounded-xl bg-white"
+              />
+              <Input
+                placeholder="Description / Sides (e.g. Mirchi Ka Salan, Boondi Raita, Gulab Jamun)"
+                value={premiumSunday?.lunch_veg?.description || ""}
+                onChange={(e) => setPremiumSunday((prev) => ({ ...prev, lunch_veg: { ...prev.lunch_veg, description: e.target.value, type: "VEG" } }))}
+                className="text-xs rounded-xl bg-white"
+              />
+            </div>
+
+            {/* 🍗 Sunday Lunch Non-Veg Special */}
+            <div className="rounded-2xl bg-white/80 border border-amber-300 p-3.5 space-y-2.5 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                  🍗 Sunday Lunch Non-Veg Special
+                </span>
+                <span className="text-[10px] font-bold bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full">Non-Veg Option</span>
+              </div>
+              <Input
+                placeholder="Non-Veg dish name (e.g. Special Sunday Chicken Dum Biryani)"
+                value={premiumSunday?.lunch_non_veg?.name || ""}
+                onChange={(e) => setPremiumSunday((prev) => ({ ...prev, lunch_non_veg: { ...prev.lunch_non_veg, name: e.target.value, type: "NON_VEG" } }))}
+                className="text-xs rounded-xl bg-white"
+              />
+              <Input
+                placeholder="Description / Sides (e.g. Mirchi Ka Salan, Boondi Raita, Gulab Jamun)"
+                value={premiumSunday?.lunch_non_veg?.description || ""}
+                onChange={(e) => setPremiumSunday((prev) => ({ ...prev, lunch_non_veg: { ...prev.lunch_non_veg, description: e.target.value, type: "NON_VEG" } }))}
+                className="text-xs rounded-xl bg-white"
+              />
+            </div>
+          </div>
+          <p className="text-[10px] text-amber-700 font-semibold">💾 Saved with the "Save All Settings" button above.</p>
         </div>
       </div>
 
