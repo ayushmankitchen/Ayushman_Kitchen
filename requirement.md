@@ -80,13 +80,13 @@ flowchart TD
 | `BREVO_SENDER_NAME` | Yes | `Ayushman Kitchen` | Display sender name in student reset emails. |
 | `PASSWORD_RESET_URL`| Yes | `http://localhost:3003/reset-password` | Base link included in student password reset emails. |
 | `MEDIA_STORAGE` | Yes | `cloudinary` (or `local`) | Media storage backend provider. |
-| `CLOUDINARY_URL` | Yes | `cloudinary://API_KEY:API_SECRET@CLOUD_NAME` | Full Cloudinary connection string from [Cloudinary Console](https://console.cloudinary.com). |
-| `CLOUDINARY_CLOUD_NAME`| Optional | `pl1uftbe` | Cloudinary cloud identifier. |
-| `CLOUDINARY_API_KEY` | Optional | `895281372528729` | Cloudinary API Key. |
-| `CLOUDINARY_API_SECRET` | Optional | `9JNs7tnwWbCi0mKss79G6YS5l5I` | Cloudinary API Secret. |
-| `VAPID_PUBLIC_KEY` | Yes | `BOPOzr52i-dlEqO-w2jN0JWvzM7cBnyLLwUiwHA_J1ubvt8IpALuTCyZ5nsu754pQz224axtgXgM85MMiHcYfZQ` | VAPID public key for Web Push notifications. |
-| `VAPID_PRIVATE_KEY`| Yes | `yslgqxAts9oen8h3JuKJ6KJCXFnxO2n6IcAwuKqTgLw` | VAPID private key (keep secret). |
-| `VAPID_SUBJECT` | Yes | `mailto:ayushmankitchen@gmail.com` | Contact email header for push notification providers. |
+| `CLOUDINARY_URL` | Optional | `cloudinary://<api_key>:<api_secret>@<cloud_name>` | Full Cloudinary connection string from [Cloudinary Console](https://console.cloudinary.com). |
+| `CLOUDINARY_CLOUD_NAME`| Optional | `__your_cloud_name__` | Cloudinary cloud identifier. |
+| `CLOUDINARY_API_KEY` | Optional | `__apikey__` | Cloudinary API Key. |
+| `CLOUDINARY_API_SECRET` | Optional | `__apikey_secret__` | Cloudinary API Secret. |
+| `VAPID_PUBLIC_KEY` | Optional | `__vapid_public_key__` | VAPID public key for Web Push notifications. |
+| `VAPID_PRIVATE_KEY`| Optional | `__vapid_private_key__` | VAPID private key (keep secret). |
+| `VAPID_SUBJECT` | Optional | `mailto:your_email@example.com` | Contact email header for push notification providers. |
 
 ### Frontend (`frontend/.env`)
 
