@@ -142,8 +142,8 @@ REACT_APP_BACKEND_URL=http://localhost:8000
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/Nishant20361/ayushman-kitchen.git
-cd ayushman-kitchen
+git clone https://github.com/ayushmankitchen/Ayushman_Kitchen.git
+cd Ayushman_Kitchen
 ```
 
 ### 2. Configure Backend
