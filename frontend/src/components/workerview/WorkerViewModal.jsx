@@ -85,11 +85,6 @@ function StudentMealCalendarView({ workerId, worker }) {
     setCalMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
   };
 
-  // Calculate leading blank days: Mon=0 ... Sun=6
-  const firstDayOfMonth = new Date(yearNum, monthNum - 1, 1);
-  const leadingBlanksCount = (firstDayOfMonth.getDay() + 6) % 7;
-  const leadingBlanks = Array.from({ length: leadingBlanksCount });
-
   const summary = calData?.summary;
 
   return (
@@ -206,7 +201,7 @@ function StudentMealCalendarView({ workerId, worker }) {
       )}
 
       {/* Calendar Grid Box */}
-      <div className="bg-white border border-stone-200 rounded-3xl p-5 shadow-sm space-y-4">
+      <div className="bg-white border border-stone-200 rounded-3xl p-4 sm:p-6 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between border-b border-stone-100 pb-3 gap-2">
           <h4 className="font-display font-bold text-sm text-slate-900 flex items-center gap-1.5">
             <ChefHat className="h-4 w-4 text-teal-800" />
@@ -240,109 +235,100 @@ function StudentMealCalendarView({ workerId, worker }) {
         ) : !calData?.days?.length ? (
           <div className="py-12 text-center text-slate-400 text-xs">No records found for this month</div>
         ) : (
-          <div>
-            {/* Weekday Headers */}
-            <div className="grid grid-cols-7 gap-2 mb-2 text-center">
-              {WEEKDAY_NAMES.map((wk) => (
-                <div key={wk} className="text-[11px] font-extrabold uppercase text-slate-500 tracking-wider">
-                  {wk}
-                </div>
-              ))}
-            </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2.5">
+            {calData.days.map((d) => {
+              const dayNum = parseInt(d.date.split("-")[2], 10);
+              const dateObj = new Date(d.date + "T00:00:00");
+              const weekdayStr = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dateObj.getDay()];
 
-            {/* Day Tiles */}
-            <div className="grid grid-cols-7 gap-2">
-              {/* Leading blanks */}
-              {leadingBlanks.map((_, i) => (
-                <div key={`blank-${i}`} className="min-h-[85px] rounded-2xl bg-stone-50/40 border border-transparent" />
-              ))}
+              let bgClass = "bg-stone-50 border-stone-200 text-slate-400";
+              let statusText = "Future";
+              let badgeColor = "bg-stone-100 text-slate-500";
 
-              {calData.days.map((d) => {
-                const dayNum = d.date.split("-")[2];
-                let bgClass = "bg-stone-50 border-stone-200 text-slate-400";
-                let statusText = "Future";
-                let badgeColor = "bg-stone-100 text-slate-500";
+              if (d.status === "BEFORE_JOIN") {
+                bgClass = "bg-stone-50/50 border-dashed border-stone-200 text-slate-300";
+                statusText = "Pre-Start";
+                badgeColor = "bg-stone-100 text-slate-400";
+              } else if (d.status === "TODAY") {
+                bgClass = "bg-sky-50/90 border-sky-300 text-sky-950 ring-2 ring-sky-400/40 shadow-xs";
+                statusText = "Today";
+                badgeColor = "bg-sky-200 text-sky-900 font-extrabold";
+              } else if (d.status === "PRESENT") {
+                bgClass = "bg-emerald-50/90 border-emerald-300 text-emerald-950";
+                statusText = "Eaten";
+                badgeColor = "bg-emerald-200 text-emerald-900";
+              } else if (d.status === "PARTIAL") {
+                bgClass = "bg-amber-50/90 border-amber-300 text-amber-950";
+                statusText = "1 Meal";
+                badgeColor = "bg-amber-200 text-amber-900";
+              } else if (d.status === "ABSENT") {
+                bgClass = "bg-rose-50/90 border-rose-300 text-rose-950";
+                statusText = "Skipped";
+                badgeColor = "bg-rose-200 text-rose-900";
+              } else if (d.status === "ON_LEAVE") {
+                bgClass = "bg-teal-50/90 border-teal-300 text-teal-950";
+                statusText = "Vacation";
+                badgeColor = "bg-teal-200 text-teal-900";
+              }
 
-                if (d.status === "BEFORE_JOIN") {
-                  bgClass = "bg-stone-50/50 border-dashed border-stone-200 text-slate-300";
-                  statusText = "Pre-Start";
-                  badgeColor = "bg-stone-100 text-slate-400";
-                } else if (d.status === "TODAY") {
-                  bgClass = "bg-sky-50 border-sky-300 text-sky-950 ring-2 ring-sky-400/40 shadow-xs";
-                  statusText = "Today";
-                  badgeColor = "bg-sky-200 text-sky-900 font-extrabold";
-                } else if (d.status === "PRESENT") {
-                  bgClass = "bg-emerald-50/90 border-emerald-300 text-emerald-950";
-                  statusText = "Eaten";
-                  badgeColor = "bg-emerald-200 text-emerald-900";
-                } else if (d.status === "PARTIAL") {
-                  bgClass = "bg-amber-50/90 border-amber-300 text-amber-950";
-                  statusText = "1 Meal";
-                  badgeColor = "bg-amber-200 text-amber-900";
-                } else if (d.status === "ABSENT") {
-                  bgClass = "bg-rose-50/90 border-rose-300 text-rose-950";
-                  statusText = "Skipped";
-                  badgeColor = "bg-rose-200 text-rose-900";
-                } else if (d.status === "ON_LEAVE") {
-                  bgClass = "bg-teal-50/90 border-teal-300 text-teal-950";
-                  statusText = "Vacation";
-                  badgeColor = "bg-teal-200 text-teal-900";
-                }
-
-                return (
-                  <div
-                    key={d.date}
-                    className={`p-2.5 rounded-2xl border transition-all flex flex-col justify-between min-h-[85px] ${bgClass}`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-display font-extrabold text-sm sm:text-base">
-                        {parseInt(dayNum, 10)}
+              return (
+                <div
+                  key={d.date}
+                  className={`p-3 rounded-2xl border transition-all flex flex-col justify-between min-h-[90px] ${bgClass}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-baseline gap-1">
+                      <span className="font-display font-extrabold text-base">
+                        {dayNum}
                       </span>
-                      <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md ${badgeColor}`}>
-                        {statusText}
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">
+                        {weekdayStr}
                       </span>
                     </div>
-
-                    {d.status !== "FUTURE" && d.status !== "BEFORE_JOIN" && (
-                      <div className="text-[10px] space-y-0.5 pt-1 border-t border-black/5 mt-1">
-                        {d.lunch && d.lunch !== "N_A" && (
-                          <div className="flex items-center justify-between leading-none py-0.5">
-                            <span className="text-slate-500 font-medium">☀️ L:</span>
-                            <span className="font-bold truncate max-w-[55px] text-[9px]">
-                              {d.lunch === "ATE"
-                                ? "✓ Ate"
-                                : d.lunch === "SCHEDULED"
-                                ? "⏳ Sched"
-                                : d.lunch === "CANCELLED"
-                                ? "✕ Off"
-                                : d.lunch === "LEAVE"
-                                ? "🏖️"
-                                : "—"}
-                            </span>
-                          </div>
-                        )}
-                        {d.dinner && d.dinner !== "N_A" && (
-                          <div className="flex items-center justify-between leading-none py-0.5">
-                            <span className="text-slate-500 font-medium">🌙 D:</span>
-                            <span className="font-bold truncate max-w-[55px] text-[9px]">
-                              {d.dinner === "ATE"
-                                ? "✓ Ate"
-                                : d.dinner === "SCHEDULED"
-                                ? "⏳ Sched"
-                                : d.dinner === "CANCELLED"
-                                ? "✕ Off"
-                                : d.dinner === "LEAVE"
-                                ? "🏖️"
-                                : "—"}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                    <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md ${badgeColor}`}>
+                      {statusText}
+                    </span>
                   </div>
-                );
-              })}
-            </div>
+
+                  {d.status !== "FUTURE" && d.status !== "BEFORE_JOIN" && (
+                    <div className="text-[10px] space-y-0.5 pt-1 border-t border-black/5 mt-1">
+                      {d.lunch && d.lunch !== "N_A" && (
+                        <div className="flex items-center justify-between leading-none py-0.5">
+                          <span className="text-slate-500 font-medium">☀️ Lunch:</span>
+                          <span className="font-bold truncate max-w-[65px] text-[9.5px]">
+                            {d.lunch === "ATE"
+                              ? "✓ Ate"
+                              : d.lunch === "SCHEDULED" || d.lunch === "DEFAULT"
+                              ? "⏳ Sched"
+                              : d.lunch === "CANCELLED"
+                              ? "✕ Off"
+                              : d.lunch === "LEAVE"
+                              ? "🏖️"
+                              : "—"}
+                          </span>
+                        </div>
+                      )}
+                      {d.dinner && d.dinner !== "N_A" && (
+                        <div className="flex items-center justify-between leading-none py-0.5">
+                          <span className="text-slate-500 font-medium">🌙 Dinner:</span>
+                          <span className="font-bold truncate max-w-[65px] text-[9.5px]">
+                            {d.dinner === "ATE"
+                              ? "✓ Ate"
+                              : d.dinner === "SCHEDULED" || d.dinner === "DEFAULT"
+                              ? "⏳ Sched"
+                              : d.dinner === "CANCELLED"
+                              ? "✕ Off"
+                              : d.dinner === "LEAVE"
+                              ? "🏖️"
+                              : "—"}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -530,7 +516,7 @@ export default function WorkerViewModal({ workerId, open, onClose }) {
         </div>
 
         {/* Content Body */}
-        <div className="p-6 sm:p-8 space-y-6">
+        <div className="p-4 sm:p-6 md:p-8 space-y-6">
           {loading && (
             <div className="py-16 text-center">
               <Loader2 className="h-8 w-8 animate-spin mx-auto text-teal-800" />
