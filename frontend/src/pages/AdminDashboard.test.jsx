@@ -65,5 +65,6 @@ describe("AdminDashboard", () => {
     });
 
     expect(container.textContent).toContain("Ayushman Kitchen");
+    expect(container.textContent).toContain("Delivery PDF");
   });
 });

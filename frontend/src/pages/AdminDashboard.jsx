@@ -28,7 +28,7 @@ import {
   Plus, Pencil, Trash2, Loader2, Menu, X, Search, UserPlus,
   MessageSquare, Eye, Send, Mic, Building2, CheckCircle2, ChevronRight, ChevronLeft,
   KeyRound, RefreshCw, Copy, Power, BarChart3, CircleDollarSign, ClipboardList,
-  Camera, Upload, Image as ImageIcon, FileText, Sun, Moon, Clock, Calendar, CalendarOff, AlertTriangle, XCircle,
+  Camera, Upload, Image as ImageIcon, FileText, Sun, Moon, Clock, Calendar, CalendarOff, AlertTriangle, XCircle, Bike,
   Settings, Megaphone, Lock, ShieldCheck, Mail, Globe, Check, EyeOff
 } from "lucide-react";
 
@@ -645,6 +645,122 @@ function OverviewSection({ workers, admin, onNavigate }) {
     toast.success(`Exported ${students.length} cancelled records for ${selectedDate} to CSV`);
   };
 
+  const handleDownloadDeliveryPDF = () => {
+    const students = (activeSlotData.students || []).filter(
+      (s) => !s.is_cancelled && !s.is_on_leave && s.delivery_option === "DELIVERY" && s.effective_choice !== "CANCELLED"
+    );
+    if (students.length === 0) {
+      toast.info(`No room delivery orders for ${activeSlot.toUpperCase()} on ${selectedDate}`);
+      return;
+    }
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      toast.error("Please allow popups to download/print PDF report");
+      return;
+    }
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Room Delivery Dispatch List - ${selectedDate} (${activeSlot.toUpperCase()})</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 24px; color: #111; }
+          h1 { margin: 0 0 4px 0; color: #b45309; font-size: 20px; }
+          .sub { color: #555; font-size: 12px; margin-bottom: 16px; }
+          .summary-box { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; background: #fffbeb; padding: 12px; border-radius: 8px; font-size: 12px; border: 1px solid #fef3c7; }
+          .summary-item { font-weight: bold; color: #92400e; }
+          table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
+          th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; }
+          th { background-color: #b45309; color: white; text-transform: uppercase; font-size: 10px; }
+          tr:nth-child(even) { background-color: #fffbf5; }
+          .room-badge { font-weight: bold; font-size: 12px; color: #92400e; background: #fef3c7; padding: 3px 6px; border-radius: 4px; border: 1px solid #fde68a; display: inline-block; }
+          .badge-deliv { color: #b45309; font-weight: bold; }
+          .note-text { color: #78350f; font-size: 10px; margin-top: 2px; font-style: italic; }
+          @media print { body { padding: 0; } button { display: none; } }
+        </style>
+      </head>
+      <body>
+        <h1>Ayushman Kitchen — Room Delivery Dispatch Sheet</h1>
+        <div class="sub">Date: <strong>${selectedDate}</strong> | Slot: <strong>${activeSlot.toUpperCase()}</strong> | Total Deliveries: <strong>${students.length}</strong> | Printed: ${new Date().toLocaleTimeString()}</div>
+        
+        <div class="summary-box">
+          <div class="summary-item">🛵 Total Room Deliveries: ${students.length} Orders</div>
+          <div class="summary-item">🍱 Meal Slot: ${activeSlot.toUpperCase()}</div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 30px;">#</th>
+              <th>Student Name</th>
+              <th>Mobile / ID</th>
+              <th>Delivery Room / Address</th>
+              <th>Diet / Dish Choice</th>
+              <th>Special Notes</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${students.map((s, idx) => `
+              <tr>
+                <td>${idx + 1}</td>
+                <td><strong>${s.name}</strong></td>
+                <td>${s.mobile || "—"}</td>
+                <td>
+                  <span class="room-badge">📍 ${s.delivery_address || "Address not provided"}</span>
+                </td>
+                <td>${s.choice_detail || s.effective_choice || "Standard"}</td>
+                <td>${s.delivery_notes ? `<span class="note-text">${s.delivery_notes}</span>` : "—"}</td>
+                <td><span class="badge-deliv">🛵 Room Delivery</span></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+        <script>
+          window.onload = function() { window.print(); }
+        </script>
+      </body>
+      </html>
+    `;
+    printWindow.document.write(html);
+    printWindow.document.close();
+  };
+
+  const handleExportDeliveryCSV = () => {
+    const students = (activeSlotData.students || []).filter(
+      (s) => !s.is_cancelled && !s.is_on_leave && s.delivery_option === "DELIVERY" && s.effective_choice !== "CANCELLED"
+    );
+    if (students.length === 0) {
+      toast.info(`No room delivery orders for ${activeSlot.toUpperCase()} on ${selectedDate}`);
+      return;
+    }
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "Index,Student Name,Mobile,Subscription Plan,Meal Slot,Delivery Address,Delivery Notes,Diet / Choice,Status,Date\n";
+    students.forEach((s, idx) => {
+      const row = [
+        idx + 1,
+        `"${(s.name || "").replace(/"/g, '""')}"`,
+        `"${(s.mobile || "").replace(/"/g, '""')}"`,
+        `"${s.plan} (${s.meal_plan_type || "BOTH"})"`,
+        activeSlot.toUpperCase(),
+        `"${(s.delivery_address || "").replace(/"/g, '""')}"`,
+        `"${(s.delivery_notes || "").replace(/"/g, '""')}"`,
+        `"${(s.choice_detail || s.effective_choice || "Standard").replace(/"/g, '""')}"`,
+        "Delivery",
+        selectedDate,
+      ].join(",");
+      csvContent += row + "\n";
+    });
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Kitchen_Delivery_${selectedDate}_${activeSlot}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success(`Exported ${students.length} delivery records for ${selectedDate} to CSV`);
+  };
+
   const openRenewModal = (student) => {
     setRenewTargetStudent(student);
     setRenewDate(todayDateStr());
@@ -1103,8 +1219,8 @@ function OverviewSection({ workers, admin, onNavigate }) {
           })()}
         </div>
 
-        {/* Export Options: Full Roster & Cancelled-Only Roster */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Export Options: Full Roster, Cancelled-Only, & Delivery-Only Roster */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Card 1: Full Kitchen Meal Preparation Roster */}
           <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 flex flex-col justify-between gap-3">
             <div>
@@ -1171,6 +1287,41 @@ function OverviewSection({ workers, admin, onNavigate }) {
                 className="flex-1 rounded-xl bg-rose-700 hover:bg-rose-800 text-white font-bold text-xs h-9 shadow-xs"
               >
                 📑 Cancelled CSV
+              </Button>
+            </div>
+          </div>
+
+          {/* Card 3: Delivery Only List */}
+          <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200 flex flex-col justify-between gap-3">
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-xs font-extrabold uppercase tracking-wider text-amber-950 flex items-center gap-1.5">
+                  <Bike className="h-4 w-4 text-amber-600" />
+                  <span>Delivery Only List ({activeSlot.toUpperCase()})</span>
+                </h4>
+                <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[10px] font-bold">
+                  {activeSummary.total_delivery || 0} Delivery Orders
+                </Badge>
+              </div>
+              <p className="text-[11px] text-amber-800/80 mt-1">
+                Downloads <span className="font-bold underline">only</span> students requesting room delivery with room numbers & instructions for <span className="font-semibold text-slate-800">{selectedDate}</span>.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                type="button"
+                onClick={handleDownloadDeliveryPDF}
+                variant="outline"
+                className="flex-1 rounded-xl border-amber-300 bg-white hover:bg-amber-100 text-amber-900 font-bold text-xs h-9"
+              >
+                🛵 Delivery PDF
+              </Button>
+              <Button
+                type="button"
+                onClick={handleExportDeliveryCSV}
+                className="flex-1 rounded-xl bg-amber-700 hover:bg-amber-800 text-white font-bold text-xs h-9 shadow-xs"
+              >
+                📦 Delivery CSV
               </Button>
             </div>
           </div>
