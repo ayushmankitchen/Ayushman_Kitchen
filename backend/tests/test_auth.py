@@ -327,7 +327,7 @@ async def test_worker_active_inactive_lifecycle_and_session_invalidation():
         worker_res = await client.post("/api/workers", json={
             "name": f"{prefix}_Ramesh",
             "mobile": f"98{secrets.randbelow(100000000):08d}",
-            "work_type": "Mason",
+            "work_type": "Standard",
             "joining_date": "2026-08-01",
             "salary": 15000,
             "status": "ACTIVE",
@@ -436,7 +436,7 @@ async def test_worker_credentials_are_generated_hashed_and_shown_once():
 
         temporary_password = "482751"
         created = await admin_client.post("/api/workers", json={
-            "name": f"{prefix}_Worker", "mobile": "", "work_type": "Helper",
+            "name": f"{prefix}_Worker", "mobile": "", "work_type": "Standard",
             "joining_date": "2026-08-01", "salary": 12000, "portal_enabled": True,
             "login_id": "", "password": temporary_password,
         })

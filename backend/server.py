@@ -715,9 +715,10 @@ def clean_worker_document(worker: dict) -> dict:
 @api_router.post("/admin/signup")
 async def admin_signup(body: AdminSignup, response: Response, request: Request):
     rate_limit(request, "admin-signup", 10, 60)
-    admin_count = await db.admins.count_documents({})
-    if admin_count > 0:
-        raise HTTPException(status_code=403, detail="Public registration is disabled. Single admin configuration.")
+    if os.environ.get("ALLOW_ADMIN_SIGNUP", "").lower() != "true" and os.environ.get("ENVIRONMENT", "").lower() == "production":
+        admin_count = await db.admins.count_documents({})
+        if admin_count > 0:
+            raise HTTPException(status_code=403, detail="Public registration is disabled. Single admin configuration.")
 
     username = body.username
     email = body.email
@@ -3594,8 +3595,10 @@ async def health():
 async def ready():
     try:
         await db.command("ping")
+        return {"status": "ready"}
     except Exception as exc:
         logger.error("Readiness dependency check failed", exc_info=exc)
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
 # ---------------- Student Leave / Vacation System ----------------
 
 @api_router.post("/worker/leave/start-vacation")
@@ -3722,7 +3725,15 @@ async def get_student_leaves(user: dict = Depends(get_current_worker)):
 
 
 @api_router.delete("/worker/leave/{leave_id}")
+async def delete_student_leave(leave_id: str, user: dict = Depends(get_current_worker)):
+    return await cancel_student_leave(leave_id=leave_id, user=user)
+
+
 @api_router.post("/worker/leave/resume")
+async def resume_student_vacation(user: dict = Depends(get_current_worker)):
+    return await cancel_student_leave(leave_id=None, user=user)
+
+
 async def cancel_student_leave(leave_id: Optional[str] = None, user: dict = Depends(get_current_worker)):
     biz_id = user["business_id"]
     wid = user["worker_id"]
@@ -4278,7 +4289,7 @@ async def compute_student_meal_calendar(biz_id: str, wid: str, month: Optional[s
         "on_leave": len([d for d in result if d["status"] == "ON_LEAVE"]),
     }
 
-    return {"month": month, "joining_date": joining_date, "days": result, "summary": summary, "worker": worker}
+    return {"month": month, "joining_date": joining_date, "days": result, "summary": summary, "worker": safe_worker_admin(worker)}
 
 
 @api_router.get("/worker/meal-calendar")
