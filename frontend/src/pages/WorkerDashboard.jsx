@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { workerApi, apiError } from "@/lib/api";
+import { downloadStudentMealPdf } from "@/lib/mealStatementPdf";
 import { applyDynamicBranding } from "@/lib/dynamicBranding";
 import { useWorkerAuth } from "@/context/WorkerAuth";
 import { Button } from "@/components/ui/button";
@@ -43,6 +44,7 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
+  FileText,
   ShieldCheck,
   ArrowRight,
   Ban,
@@ -1514,7 +1516,7 @@ export default function WorkerDashboard() {
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
                     <Button
                       type="button"
                       variant="outline"
@@ -1535,6 +1537,24 @@ export default function WorkerDashboard() {
                       className="rounded-xl h-9 px-3"
                     >
                       <ChevronRight className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        downloadStudentMealPdf({
+                          workerId: data?.worker?.id,
+                          studentName: data?.worker?.name,
+                          month: calMonth,
+                          isAdmin: false,
+                        })
+                      }
+                      className="rounded-xl h-9 px-3 text-xs font-bold border-teal-200 text-teal-900 bg-teal-50 hover:bg-teal-100 flex items-center gap-1.5 shadow-2xs"
+                      title="Download Monthly Meal Statement PDF"
+                    >
+                      <FileText className="h-4 w-4 text-teal-800" />
+                      <span>Download PDF</span>
                     </Button>
                   </div>
                 </div>

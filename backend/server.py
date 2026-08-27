@@ -40,6 +40,7 @@ from backend.services.payroll import PayrollService
 from backend.services.storage import VoiceStorage, ProfilePhotoStorage, PHOTO_UPLOAD_DIR
 from backend.services.email import email_service
 from backend.services.salary_slip_pdf import generate_salary_slip_pdf, sanitize_filename
+from backend.services.student_meal_pdf import generate_student_meal_statement_pdf
 from backend.services import push
 
 # MongoDB connection
@@ -4320,6 +4321,86 @@ async def get_admin_student_meal_calendar(
 ):
     """Admin endpoint: returns per-day meal attendance calendar for a student."""
     return await compute_student_meal_calendar(admin["business_id"], worker_id, month)
+
+
+@api_router.get("/admin/workers/{worker_id}/meal-pdf")
+async def get_admin_student_meal_pdf(
+    worker_id: str,
+    month: Optional[str] = Query(default=None),
+    admin: dict = Depends(get_current_admin)
+):
+    """Admin endpoint: returns A4 PDF statement of meal attendance and consumption for a student."""
+    biz_id = admin["business_id"]
+    worker = await db.workers.find_one({"id": worker_id, "business_id": biz_id}, {"_id": 0, "password_hash": 0})
+    if not worker:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    if not month:
+        month = now_tz().strftime("%Y-%m")
+
+    business = await db.businesses.find_one({"id": biz_id}, {"_id": 0})
+    calendar_data = await compute_student_meal_calendar(biz_id, worker_id, month)
+    payments = await db.payments.find({"business_id": biz_id, "worker_id": worker_id, "deleted_at": None}, {"_id": 0}).sort("date", -1).to_list(10)
+
+    pdf_bytes = generate_student_meal_statement_pdf(
+        worker=worker,
+        business=business,
+        month=month,
+        calendar_data=calendar_data,
+        payments=payments,
+    )
+
+    safe_name = sanitize_filename(worker.get("name", "Student"))
+    filename = f"Meal_Statement_{safe_name}_{month}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store, private",
+        },
+    )
+
+
+@api_router.get("/worker/me/meal-pdf")
+async def get_worker_self_meal_pdf(
+    month: Optional[str] = Query(default=None),
+    user: dict = Depends(get_current_worker)
+):
+    """Student endpoint: returns A4 PDF statement of meal attendance and consumption for the logged-in student."""
+    biz_id = user["business_id"]
+    wid = user["worker_id"]
+    worker = await db.workers.find_one({"id": wid, "business_id": biz_id}, {"_id": 0, "password_hash": 0})
+    if not worker:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+
+    if not month:
+        month = now_tz().strftime("%Y-%m")
+
+    business = await db.businesses.find_one({"id": biz_id}, {"_id": 0})
+    calendar_data = await compute_student_meal_calendar(biz_id, wid, month)
+    payments = await db.payments.find({"business_id": biz_id, "worker_id": wid, "deleted_at": None}, {"_id": 0}).sort("date", -1).to_list(10)
+
+    pdf_bytes = generate_student_meal_statement_pdf(
+        worker=worker,
+        business=business,
+        month=month,
+        calendar_data=calendar_data,
+        payments=payments,
+    )
+
+    safe_name = sanitize_filename(worker.get("name", "Student"))
+    filename = f"Meal_Statement_{safe_name}_{month}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store, private",
+        },
+    )
 
 
 @api_router.get("/admin/workers/{worker_id}/meal-stats")

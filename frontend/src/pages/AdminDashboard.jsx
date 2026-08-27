@@ -16,6 +16,7 @@ import WorkerViewModal from "@/components/workerview/WorkerViewModal";
 import WorkerAvatar from "@/components/ui/WorkerAvatar";
 import AttendanceCalendar from "@/components/attendance/AttendanceCalendar";
 import SalarySlipModal from "@/components/salary/SalarySlipModal";
+import { downloadStudentMealPdf } from "@/lib/mealStatementPdf";
 import MessageBubble from "@/components/chat/MessageBubble";
 import VoiceRecorder from "@/components/chat/VoiceRecorder";
 import AudioPlayer from "@/components/chat/AudioPlayer";
@@ -1917,6 +1918,22 @@ function WorkersSection({ workers, reload, onOpenWorkerView }) {
                   </td>
                   <td className="py-3 px-4 text-right">
                     <div className="flex items-center justify-end gap-1.5">
+                      {/* Meal Statement PDF */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          downloadStudentMealPdf({
+                            workerId: w.id,
+                            studentName: w.name,
+                            isAdmin: true,
+                          })
+                        }
+                        className="h-8 px-2.5 text-xs font-bold rounded-xl border-teal-200 text-teal-800 bg-teal-50 hover:bg-teal-100"
+                        title="Download Student Meal Statement PDF"
+                      >
+                        <FileText className="h-3.5 w-3.5 mr-1 text-teal-800" /> PDF
+                      </Button>
                       {/* Worker View (Phone display mode) */}
                       <button
                         data-testid={`view-worker-account-${w.id}`}
@@ -2028,6 +2045,21 @@ function WorkersSection({ workers, reload, onOpenWorkerView }) {
               </div>
 
               <div className="flex items-center justify-between gap-2 pt-1 border-t border-stone-100">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    downloadStudentMealPdf({
+                      workerId: w.id,
+                      studentName: w.name,
+                      isAdmin: true,
+                    })
+                  }
+                  className="rounded-xl border-teal-200 text-teal-800 bg-teal-50 hover:bg-teal-100 h-9 px-2.5 text-xs font-bold"
+                  title="Download Meal Statement PDF"
+                >
+                  <FileText className="h-3.5 w-3.5 mr-1" /> PDF
+                </Button>
                 <button
                   data-testid={`view-worker-card-account-${w.id}`}
                   onClick={() => onOpenWorkerView(w.id)}

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import WorkerAvatar from "@/components/ui/WorkerAvatar";
 import { adminApi, apiError } from "@/lib/api";
+import { downloadStudentMealPdf } from "@/lib/mealStatementPdf";
 import {
   CalendarCheck,
   ChevronLeft,
@@ -25,6 +26,7 @@ import {
   MapPin,
   Bike,
   Utensils,
+  FileText,
   Calendar as CalendarIcon,
 } from "lucide-react";
 
@@ -103,7 +105,7 @@ function StudentMealCalendarView({ workerId, worker }) {
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 self-start sm:self-auto">
+        <div className="flex flex-wrap items-center gap-1.5 self-start sm:self-auto">
           <Button
             type="button"
             variant="outline"
@@ -130,6 +132,24 @@ function StudentMealCalendarView({ workerId, worker }) {
             className="rounded-xl h-8 px-2.5 text-xs font-bold border-stone-200"
           >
             <ChevronRight className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              downloadStudentMealPdf({
+                workerId,
+                studentName: worker?.name || "Student",
+                month: calMonth,
+                isAdmin: true,
+              })
+            }
+            className="rounded-xl h-8 px-3 text-xs font-bold border-teal-200 text-teal-900 bg-teal-50 hover:bg-teal-100 flex items-center gap-1.5 shadow-2xs"
+            title="Download Monthly Meal Statement PDF"
+          >
+            <FileText className="h-3.5 w-3.5 text-teal-800" />
+            <span>Meal PDF</span>
           </Button>
         </div>
       </div>
@@ -487,31 +507,51 @@ export default function WorkerViewModal({ workerId, open, onClose }) {
           )}
 
           {/* Sub-tab navigation: 2 Clean Tabs */}
-          <div className="flex items-center gap-2 mt-5 border-t border-white/10 pt-4">
-            <button
+          <div className="flex flex-wrap items-center justify-between gap-2 mt-5 border-t border-white/10 pt-4">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setModalTab("meals")}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  modalTab === "meals"
+                    ? "bg-amber-400 text-slate-950 shadow-sm"
+                    : "bg-white/10 text-teal-200 hover:bg-white/20"
+                }`}
+              >
+                <ChefHat className="h-3.5 w-3.5 inline mr-1.5" />
+                Meal Quota & Stats
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalTab("calendar")}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  modalTab === "calendar"
+                    ? "bg-amber-400 text-slate-950 shadow-sm"
+                    : "bg-white/10 text-teal-200 hover:bg-white/20"
+                }`}
+              >
+                <CalendarCheck className="h-3.5 w-3.5 inline mr-1.5" />
+                Attendance Calendar
+              </button>
+            </div>
+
+            <Button
               type="button"
-              onClick={() => setModalTab("meals")}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                modalTab === "meals"
-                  ? "bg-amber-400 text-slate-950 shadow-sm"
-                  : "bg-white/10 text-teal-200 hover:bg-white/20"
-              }`}
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                downloadStudentMealPdf({
+                  workerId,
+                  studentName: data?.worker?.name || "Student",
+                  isAdmin: true,
+                })
+              }
+              className="rounded-xl h-8 px-3 text-xs font-bold bg-white/10 hover:bg-white/20 text-amber-300 border-white/20 flex items-center gap-1.5"
+              title="Download Student Meal Statement PDF"
             >
-              <ChefHat className="h-3.5 w-3.5 inline mr-1.5" />
-              Meal Quota & Stats
-            </button>
-            <button
-              type="button"
-              onClick={() => setModalTab("calendar")}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                modalTab === "calendar"
-                  ? "bg-amber-400 text-slate-950 shadow-sm"
-                  : "bg-white/10 text-teal-200 hover:bg-white/20"
-              }`}
-            >
-              <CalendarCheck className="h-3.5 w-3.5 inline mr-1.5" />
-              Attendance Calendar
-            </button>
+              <FileText className="h-3.5 w-3.5 text-amber-300" />
+              <span>Download PDF Statement</span>
+            </Button>
           </div>
         </div>
 
