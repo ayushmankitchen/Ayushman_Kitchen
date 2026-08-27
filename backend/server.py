@@ -2312,7 +2312,7 @@ async def admin_stats(admin: dict = Depends(get_current_admin)):
 
 # ---------------- Worker Self Endpoints ----------------
 @api_router.get("/worker/me/data")
-async def worker_self_data(user: dict = Depends(get_current_worker)):
+async def worker_self_data(request: Request, response: Response, user: dict = Depends(get_current_worker)):
     worker = await db.workers.find_one({"id": user["worker_id"], "business_id": user["business_id"]}, {"_id": 0})
     if not worker:
         raise HTTPException(
@@ -2334,13 +2334,21 @@ async def worker_self_data(user: dict = Depends(get_current_worker)):
     if biz_id:
         business = await db.businesses.find_one({"id": biz_id}, {"_id": 0})
 
+    csrf_token = set_session_cookie(
+        response,
+        "session_token",
+        request.cookies.get("session_token", ""),
+        request.cookies.get("csrf_token"),
+    )
+
     return {
-        "worker": worker,
+        "worker": clean_worker_document(worker),
         "business": business,
         "attendance": attendance,
         "payments": payments,
         "extra_work": extra,
         "summary": summary,
+        "csrf_token": csrf_token,
     }
 
 
@@ -4139,11 +4147,14 @@ async def compute_student_meal_calendar(biz_id: str, wid: str, month: Optional[s
 
     leave_dates: set = set()
     for lv in leaves:
-        cur = datetime.strptime(lv["start_date"], "%Y-%m-%d")
-        end_lv = datetime.strptime(lv["end_date"], "%Y-%m-%d")
-        while cur <= end_lv:
-            leave_dates.add(cur.strftime("%Y-%m-%d"))
-            cur += timedelta(days=1)
+        try:
+            cur = datetime.strptime(lv.get("start_date", ""), "%Y-%m-%d")
+            end_lv = datetime.strptime(lv.get("end_date", ""), "%Y-%m-%d")
+            while cur <= end_lv:
+                leave_dates.add(cur.strftime("%Y-%m-%d"))
+                cur += timedelta(days=1)
+        except Exception:
+            continue
 
     today = get_today_date()
     worker = await db.workers.find_one({"id": wid, "business_id": biz_id}, {"_id": 0})
@@ -4289,7 +4300,7 @@ async def compute_student_meal_calendar(biz_id: str, wid: str, month: Optional[s
         "on_leave": len([d for d in result if d["status"] == "ON_LEAVE"]),
     }
 
-    return {"month": month, "joining_date": joining_date, "days": result, "summary": summary, "worker": safe_worker_admin(worker)}
+    return {"month": month, "joining_date": joining_date, "days": result, "summary": summary, "worker": clean_worker_document(worker)}
 
 
 @api_router.get("/worker/meal-calendar")

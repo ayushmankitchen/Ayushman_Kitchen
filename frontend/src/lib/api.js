@@ -15,10 +15,35 @@ export const API = `${BACKEND_URL.replace(/\/$/, "")}/api`;
 export const adminApi = axios.create({ baseURL: API, withCredentials: true });
 export const workerApi = axios.create({ baseURL: API, withCredentials: true });
 
-let adminCsrf = null;
-let workerCsrf = null;
-export const setAdminCsrf = (value) => { adminCsrf = value || null; };
-export const setWorkerCsrf = (value) => { workerCsrf = value || null; };
+const getStoredToken = (key) => {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    return localStorage.getItem(key) || null;
+  } catch {
+    return null;
+  }
+};
+
+const setStoredToken = (key, value) => {
+  if (typeof localStorage === "undefined") return;
+  try {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch {}
+};
+
+let adminCsrf = getStoredToken("admin_csrf_token");
+let workerCsrf = getStoredToken("worker_csrf_token");
+
+export const setAdminCsrf = (value) => {
+  adminCsrf = value || null;
+  setStoredToken("admin_csrf_token", value);
+};
+
+export const setWorkerCsrf = (value) => {
+  workerCsrf = value || null;
+  setStoredToken("worker_csrf_token", value);
+};
 
 export function csrfTokenFromCookie() {
   if (typeof document === "undefined") return null;
@@ -38,19 +63,67 @@ export function applyCsrfHeader(config, memoryToken) {
 const csrfInterceptor = (getToken) => (config) => {
   return applyCsrfHeader(config, getToken());
 };
-adminApi.interceptors.request.use(csrfInterceptor(() => adminCsrf));
-workerApi.interceptors.request.use(csrfInterceptor(() => workerCsrf));
+adminApi.interceptors?.request?.use?.(csrfInterceptor(() => adminCsrf || getStoredToken("admin_csrf_token")));
+workerApi.interceptors?.request?.use?.(csrfInterceptor(() => workerCsrf || getStoredToken("worker_csrf_token")));
 
-// Session refresh endpoints return a fresh token. Keep the next mutating request
-// synchronized even if the PWA was resumed while the cookie changed.
-adminApi.interceptors.response?.use((response) => {
-  if (response.data?.csrf_token) setAdminCsrf(response.data.csrf_token);
-  return response;
-});
-workerApi.interceptors.response?.use((response) => {
-  if (response.data?.csrf_token) setWorkerCsrf(response.data.csrf_token);
-  return response;
-});
+// Response interceptors: store fresh token and auto-retry on 403 CSRF failure
+adminApi.interceptors?.response?.use?.(
+  (response) => {
+    if (response.data?.csrf_token) setAdminCsrf(response.data.csrf_token);
+    return response;
+  },
+  async (error) => {
+    const originalRequest = error?.config;
+    if (
+      error?.response?.status === 403 &&
+      error?.response?.data?.detail === "CSRF validation failed" &&
+      originalRequest &&
+      !originalRequest._retry
+    ) {
+      originalRequest._retry = true;
+      try {
+        const refreshRes = await axios.get(`${API}/admin/auth/me`, { withCredentials: true });
+        const newToken = refreshRes.data?.csrf_token;
+        if (newToken) {
+          setAdminCsrf(newToken);
+          originalRequest.headers = originalRequest.headers || {};
+          originalRequest.headers["X-CSRF-Token"] = newToken;
+          return adminApi(originalRequest);
+        }
+      } catch {}
+    }
+    return Promise.reject(error);
+  }
+);
+
+workerApi.interceptors?.response?.use?.(
+  (response) => {
+    if (response.data?.csrf_token) setWorkerCsrf(response.data.csrf_token);
+    return response;
+  },
+  async (error) => {
+    const originalRequest = error?.config;
+    if (
+      error?.response?.status === 403 &&
+      error?.response?.data?.detail === "CSRF validation failed" &&
+      originalRequest &&
+      !originalRequest._retry
+    ) {
+      originalRequest._retry = true;
+      try {
+        const refreshRes = await axios.get(`${API}/worker/auth/me`, { withCredentials: true });
+        const newToken = refreshRes.data?.csrf_token;
+        if (newToken) {
+          setWorkerCsrf(newToken);
+          originalRequest.headers = originalRequest.headers || {};
+          originalRequest.headers["X-CSRF-Token"] = newToken;
+          return workerApi(originalRequest);
+        }
+      } catch {}
+    }
+    return Promise.reject(error);
+  }
+);
 
 export function apiError(e) {
   const detail = e?.response?.data?.detail;
