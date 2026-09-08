@@ -1,0 +1,16 @@
+{
+  "name": "ayushman-kitchen",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n \"BACKEND,FRONTEND\" -c \"cyan,green\" \"cd backend && python3 -m uvicorn app.main:app --reload --port 8000\" \"cd frontend && npm run dev:frontend\"",
+    "start": "npm run dev",
+    "backend": "cd backend && python3 -m uvicorn app.main:app --reload --port 8000",
+    "frontend": "cd frontend && npm run dev:frontend",
+    "test": "cd backend && python3 -m pytest",
+    "seed": "cd backend && python3 -m app.seed"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.4"
+  }
+}
