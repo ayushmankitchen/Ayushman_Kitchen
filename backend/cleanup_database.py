@@ -9,6 +9,8 @@ MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.environ.get("DB_NAME", "ayushman_kitchen")
 
 async def clean_database():
+    from services.script_safety import require_local_scratch_database
+    require_local_scratch_database(MONGO_URL, DB_NAME)
     print(f"Connecting to MongoDB Atlas ({DB_NAME})...")
     client = AsyncIOMotorClient(MONGO_URL, serverSelectionTimeoutMS=10000)
     db = client[DB_NAME]

@@ -12,8 +12,8 @@ const BACKEND_URL = isProd
 
 export const API = `${BACKEND_URL.replace(/\/$/, "")}/api`;
 
-export const adminApi = axios.create({ baseURL: API, withCredentials: true });
-export const workerApi = axios.create({ baseURL: API, withCredentials: true });
+export const adminApi = axios.create({ baseURL: API, withCredentials: true, timeout: 30000 });
+export const workerApi = axios.create({ baseURL: API, withCredentials: true, timeout: 30000 });
 
 const getStoredToken = (key) => {
   if (typeof localStorage === "undefined") return null;
@@ -82,7 +82,7 @@ adminApi.interceptors?.response?.use?.(
     ) {
       originalRequest._retry = true;
       try {
-        const refreshRes = await axios.get(`${API}/admin/auth/me`, { withCredentials: true });
+        const refreshRes = await axios.get(`${API}/admin/auth/me`, { withCredentials: true, timeout: 30000 });
         const newToken = refreshRes.data?.csrf_token;
         if (newToken) {
           setAdminCsrf(newToken);
@@ -111,7 +111,7 @@ workerApi.interceptors?.response?.use?.(
     ) {
       originalRequest._retry = true;
       try {
-        const refreshRes = await axios.get(`${API}/worker/auth/me`, { withCredentials: true });
+        const refreshRes = await axios.get(`${API}/worker/auth/me`, { withCredentials: true, timeout: 30000 });
         const newToken = refreshRes.data?.csrf_token;
         if (newToken) {
           setWorkerCsrf(newToken);

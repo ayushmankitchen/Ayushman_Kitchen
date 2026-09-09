@@ -1,0 +1,360 @@
+{
+  "checked_at_utc": "2026-09-09T02:44:41.579336+00:00",
+  "http": [
+    {
+      "url": "https://ayushman-kitchen.vercel.app/",
+      "status": 200,
+      "elapsed_ms": 421,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "x-request-id": null,
+        "x-frame-options": null,
+        "x-content-type-options": null
+      }
+    },
+    {
+      "url": "https://ayushman-kitchen.vercel.app/student/login",
+      "status": 200,
+      "elapsed_ms": 382,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "x-request-id": null,
+        "x-frame-options": null,
+        "x-content-type-options": null
+      }
+    },
+    {
+      "url": "https://ayushman-kitchen.vercel.app/api/health",
+      "status": 200,
+      "elapsed_ms": 331,
+      "headers": {
+        "content-type": "application/json",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "x-request-id": "99b64c56-50eb-46fc-a425-07c9a4b34dd0",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff"
+      },
+      "body": {
+        "status": "ok",
+        "service": "Ayushman Kitchen API",
+        "version": "1.0.0",
+        "environment": "production",
+        "timezone": "Asia/Kolkata"
+      }
+    },
+    {
+      "url": "https://ayushman-kitchen.vercel.app/api/ready",
+      "status": 200,
+      "elapsed_ms": 269,
+      "headers": {
+        "content-type": "application/json",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "x-request-id": "08cf7900-067e-4854-8b05-d994e01af12f",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff"
+      },
+      "body": {
+        "status": "ready"
+      }
+    },
+    {
+      "url": "https://ayushman-kitchen.vercel.app/api/public/business",
+      "status": 200,
+      "elapsed_ms": 282,
+      "headers": {
+        "content-type": "application/json",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "x-request-id": "a937b161-b7ae-4a4b-add3-fb33db60fa07",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff"
+      }
+    },
+    {
+      "url": "https://ayushman-kitchen.vercel.app/api/workers",
+      "status": 401,
+      "elapsed_ms": 530,
+      "headers": {
+        "content-type": "application/json",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "x-request-id": "f1a15177-a460-4d0e-9a17-dae753311838",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff"
+      }
+    },
+    {
+      "url": "https://ayushman-kitchen.onrender.com/api/health",
+      "status": 200,
+      "elapsed_ms": 371,
+      "headers": {
+        "content-type": "application/json",
+        "cache-control": null,
+        "x-request-id": "df994bd7-8d35-4bf7-b44c-dc9332fb8956",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff"
+      },
+      "body": {
+        "status": "ok",
+        "service": "Ayushman Kitchen API",
+        "version": "1.0.0",
+        "environment": "production",
+        "timezone": "Asia/Kolkata"
+      }
+    },
+    {
+      "url": "https://ayushman-kitchen.onrender.com/api/ready",
+      "status": 200,
+      "elapsed_ms": 204,
+      "headers": {
+        "content-type": "application/json",
+        "cache-control": null,
+        "x-request-id": "e03aeafe-daf6-47cf-9e8a-c99b8a55886b",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff"
+      },
+      "body": {
+        "status": "ready"
+      }
+    }
+  ],
+  "database": {
+    "ping": "ok",
+    "workers_total": 18,
+    "workers_active": 18,
+    "business_count": 19,
+    "missing_business_workers": 0,
+    "indexes": {
+      "admins": [
+        {
+          "name": "_id_",
+          "keys": {
+            "_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        },
+        {
+          "name": "username_1",
+          "keys": {
+            "username": 1
+          },
+          "unique": true,
+          "ttl": null
+        },
+        {
+          "name": "email_1",
+          "keys": {
+            "email": 1
+          },
+          "unique": true,
+          "ttl": null
+        }
+      ],
+      "businesses": [
+        {
+          "name": "_id_",
+          "keys": {
+            "_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        },
+        {
+          "name": "owner_admin_id_1",
+          "keys": {
+            "owner_admin_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        }
+      ],
+      "workers": [
+        {
+          "name": "_id_",
+          "keys": {
+            "_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        },
+        {
+          "name": "business_id_1_mobile_1",
+          "keys": {
+            "business_id": 1,
+            "mobile": 1
+          },
+          "unique": true,
+          "ttl": null
+        },
+        {
+          "name": "business_id_1_email_1",
+          "keys": {
+            "business_id": 1,
+            "email": 1
+          },
+          "unique": true,
+          "ttl": null
+        },
+        {
+          "name": "business_id_1_login_id_1",
+          "keys": {
+            "business_id": 1,
+            "login_id": 1
+          },
+          "unique": true,
+          "ttl": null
+        }
+      ],
+      "meal_settings": [
+        {
+          "name": "_id_",
+          "keys": {
+            "_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        }
+      ],
+      "meal_selections": [
+        {
+          "name": "_id_",
+          "keys": {
+            "_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        }
+      ],
+      "worker_leaves": [
+        {
+          "name": "_id_",
+          "keys": {
+            "_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        }
+      ],
+      "activity_logs": [
+        {
+          "name": "_id_",
+          "keys": {
+            "_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        }
+      ],
+      "conversations": [
+        {
+          "name": "_id_",
+          "keys": {
+            "_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        },
+        {
+          "name": "business_id_1_worker_id_1",
+          "keys": {
+            "business_id": 1,
+            "worker_id": 1
+          },
+          "unique": true,
+          "ttl": null
+        }
+      ],
+      "messages": [
+        {
+          "name": "_id_",
+          "keys": {
+            "_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        },
+        {
+          "name": "messages_expires_at_ttl",
+          "keys": {
+            "expires_at": 1
+          },
+          "unique": false,
+          "ttl": 0
+        },
+        {
+          "name": "conversation_id_1_created_at_1",
+          "keys": {
+            "conversation_id": 1,
+            "created_at": 1
+          },
+          "unique": false,
+          "ttl": null
+        },
+        {
+          "name": "business_id_1_worker_id_1",
+          "keys": {
+            "business_id": 1,
+            "worker_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        }
+      ],
+      "attendance": [
+        {
+          "name": "_id_",
+          "keys": {
+            "_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        },
+        {
+          "name": "business_id_1_worker_id_1_date_1",
+          "keys": {
+            "business_id": 1,
+            "worker_id": 1,
+            "date": 1
+          },
+          "unique": true,
+          "ttl": null
+        }
+      ],
+      "worker_sessions": [
+        {
+          "name": "_id_",
+          "keys": {
+            "_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        },
+        {
+          "name": "session_token_1",
+          "keys": {
+            "session_token": 1
+          },
+          "unique": true,
+          "ttl": null
+        },
+        {
+          "name": "worker_id_1",
+          "keys": {
+            "worker_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        }
+      ]
+    },
+    "duplicate_groups": {
+      "admins:id": 0,
+      "businesses:id": 0,
+      "workers:id": 0,
+      "meal_settings:business_id": 0,
+      "meal_selections:business_id,worker_id,date,meal_slot": 0,
+      "conversations:id": 0
+    }
+  }
+}

@@ -242,6 +242,8 @@ DAYS_MENU = {
 }
 
 async def seed():
+    from services.script_safety import require_local_scratch_database
+    require_local_scratch_database(MONGO_URL, DB_NAME)
     print(f"Connecting to MongoDB Atlas at: {MONGO_URL[:35]}...")
     client = AsyncIOMotorClient(MONGO_URL, serverSelectionTimeoutMS=10000)
     db = client[DB_NAME]

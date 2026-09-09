@@ -9,8 +9,8 @@ from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depend
 from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo import IndexModel, ASCENDING
-from pymongo.errors import DuplicateKeyError
+from pymongo import IndexModel, ASCENDING, UpdateOne
+from pymongo.errors import DuplicateKeyError, PyMongoError
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
@@ -25,6 +25,9 @@ import hashlib
 import re
 import asyncio
 from collections import defaultdict, deque
+from copy import deepcopy
+from backend.services.production_indexes import ensure_production_indexes
+from starlette.concurrency import run_in_threadpool
 import urllib.parse
 from urllib.parse import urlparse, quote_plus
 
@@ -56,6 +59,10 @@ except Exception:
 _client_kwargs: dict[str, Any] = {
     "serverSelectionTimeoutMS": int(os.environ.get("MONGO_SERVER_SELECTION_TIMEOUT_MS", "5000")),
     "connectTimeoutMS": int(os.environ.get("MONGO_CONNECT_TIMEOUT_MS", "5000")),
+    "socketTimeoutMS": int(os.environ.get("MONGO_SOCKET_TIMEOUT_MS", "15000")),
+    "waitQueueTimeoutMS": int(os.environ.get("MONGO_WAIT_QUEUE_TIMEOUT_MS", "5000")),
+    "maxPoolSize": int(os.environ.get("MONGO_MAX_POOL_SIZE", "50")),
+    "timeoutMS": int(os.environ.get("MONGO_OPERATION_TIMEOUT_MS", "20000")),
 }
 if _ca_file and ("mongodb+srv://" in mongo_url or "ssl=true" in mongo_url.lower() or "tls=true" in mongo_url.lower()):
     _client_kwargs["tlsCAFile"] = _ca_file
@@ -82,7 +89,8 @@ RENEWAL_ACTIVITY_TYPES = {"SUBSCRIPTION_RENEWED", "RENEWAL", "RENEW", "SUBSCRIPT
 voice_storage = VoiceStorage()
 photo_storage = ProfilePhotoStorage()
 
-app = FastAPI(title="WorkForce API")
+app = FastAPI(title="Ayushman Kitchen API", docs_url=None if IS_PRODUCTION else "/docs",
+              redoc_url=None if IS_PRODUCTION else "/redoc", openapi_url=None if IS_PRODUCTION else "/openapi.json")
 api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO)
@@ -155,8 +163,10 @@ def validate_environment() -> None:
             raise RuntimeError(f"Missing required environment variable: {name}")
     if not IS_PRODUCTION:
         return
-    if len(JWT_SECRET) < 16:
-        raise RuntimeError("JWT_SECRET must be at least 16 characters in production")
+    if len(JWT_SECRET) < 32:
+        raise RuntimeError("JWT_SECRET must be at least 32 characters in production")
+    if COOKIE_SAMESITE not in {"lax", "strict", "none"}:
+        raise RuntimeError("Invalid COOKIE_SAMESITE")
 
 
 def set_session_cookie(response: Response, name: str, value: str, csrf_token: Optional[str] = None) -> str:
@@ -171,6 +181,12 @@ def set_session_cookie(response: Response, name: str, value: str, csrf_token: Op
 def rate_limit(request: Request, scope: str, limit: int, window: int = 60) -> None:
     key = f"{scope}:{request.client.host if request.client else 'unknown'}"
     now = time.monotonic()
+    if len(_rate_buckets) >= 10000:
+        for stale_key, stale_bucket in list(_rate_buckets.items()):
+            if not stale_bucket or stale_bucket[-1] < now - 3600:
+                del _rate_buckets[stale_key]
+        if key not in _rate_buckets and len(_rate_buckets) >= 10000:
+            raise HTTPException(status_code=429, detail="Too many requests. Please try again shortly.")
     bucket = _rate_buckets[key]
     while bucket and bucket[0] <= now - window:
         bucket.popleft()
@@ -181,11 +197,16 @@ def rate_limit(request: Request, scope: str, limit: int, window: int = 60) -> No
 
 # ---------------- Helpers & Auth Dependencies ----------------
 def hash_password(password: str) -> str:
+    if len(password.encode("utf-8")) > 72:
+        raise HTTPException(status_code=422, detail="Password must be at most 72 UTF-8 bytes")
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
 
 
 def create_access_token(admin_id: str, email: str, business_id: str) -> str:
@@ -693,12 +714,30 @@ class PushSubscriptionCreate(BaseModel):
     endpoint: str = Field(min_length=1, max_length=2048)
     keys: Dict[str, str]
 
+    @field_validator("endpoint")
+    @classmethod
+    def valid_endpoint(cls, value: str) -> str:
+        parsed = urlparse(value)
+        host = parsed.hostname or ""
+        allowed = {"fcm.googleapis.com", "updates.push.services.mozilla.com", "web.push.apple.com"}
+        if (parsed.scheme != "https" or parsed.username or parsed.password or parsed.port not in {None, 443}
+                or not (host in allowed or host.endswith(".notify.windows.com"))):
+            raise ValueError("Unsupported push service endpoint")
+        return value
+
     @field_validator("keys")
     @classmethod
     def valid_keys(cls, value: Dict[str, str]) -> Dict[str, str]:
         if not value.get("p256dh") or not value.get("auth"):
             raise ValueError("Push subscription keys are incomplete")
         return value
+
+
+def parse_request_date(value: str) -> datetime:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=422, detail="Date must be a valid YYYY-MM-DD date")
 
 
 def generate_unique_worker_id() -> str:
@@ -717,9 +756,7 @@ def clean_worker_document(worker: dict) -> dict:
 async def admin_signup(body: AdminSignup, response: Response, request: Request):
     rate_limit(request, "admin-signup", 10, 60)
     if os.environ.get("ALLOW_ADMIN_SIGNUP", "").lower() != "true" and os.environ.get("ENVIRONMENT", "").lower() == "production":
-        admin_count = await db.admins.count_documents({})
-        if admin_count > 0:
-            raise HTTPException(status_code=403, detail="Public registration is disabled. Single admin configuration.")
+        raise HTTPException(status_code=403, detail="Public registration is disabled. Single admin configuration.")
 
     username = body.username
     email = body.email
@@ -741,7 +778,7 @@ async def admin_signup(body: AdminSignup, response: Response, request: Request):
         "name": body.name.strip(),
         "username": username,
         "email": email,
-        "password_hash": hash_password(body.password),
+        "password_hash": await run_in_threadpool(hash_password, body.password),
         "is_active": True,
         "created_at": now_iso,
         "updated_at": now_iso,
@@ -783,6 +820,7 @@ async def root_health():
         "status": "ok",
         "service": "Ayushman Kitchen API",
         "version": "1.0.0",
+        "revision": os.environ.get("RENDER_GIT_COMMIT", "")[:12] or None,
         "environment": ENVIRONMENT,
         "timezone": "Asia/Kolkata",
     }
@@ -855,7 +893,7 @@ async def admin_login(body: AdminLogin, response: Response, request: Request):
     admin = await db.admins.find_one(
         {"$or": [{"email": ident}, {"username": ident}], "disabled_at": {"$in": [None, ""]}}
     )
-    if not admin or admin.get("is_active") is False or not admin.get("password_hash") or not verify_password(body.password, admin["password_hash"]):
+    if not admin or admin.get("is_active") is False or not admin.get("password_hash") or not await run_in_threadpool(verify_password, body.password, admin["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid username/email or password")
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -968,7 +1006,12 @@ async def auth_reset_password(body: ResetPasswordRequest, request: Request):
         raise HTTPException(status_code=400, detail="Password reset link has expired. Please request a new one.")
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    new_hash = hash_password(body.new_password)
+    new_hash = await run_in_threadpool(hash_password, body.new_password)
+    claimed = await db.password_reset_tokens.update_one(
+        {"id": reset_doc["id"], "used_at": None}, {"$set": {"used_at": now_iso}}
+    )
+    if claimed.modified_count != 1:
+        raise HTTPException(status_code=400, detail="Invalid or expired password reset link")
 
     admin_id = reset_doc.get("admin_id")
     worker_id = reset_doc.get("worker_id")
@@ -1081,7 +1124,12 @@ async def admin_reset_password(body: ResetPasswordRequest, request: Request):
         raise HTTPException(status_code=400, detail="Password reset link has expired. Please request a new one.")
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    new_hash = hash_password(body.new_password)
+    new_hash = await run_in_threadpool(hash_password, body.new_password)
+    claimed = await db.password_reset_tokens.update_one(
+        {"id": reset_doc["id"], "used_at": None}, {"$set": {"used_at": now_iso}}
+    )
+    if claimed.modified_count != 1:
+        raise HTTPException(status_code=400, detail="Invalid or expired password reset link")
     target_admin_id = reset_doc.get("admin_id") or reset_doc.get("user_id")
 
     if target_admin_id:
@@ -1097,6 +1145,7 @@ async def admin_reset_password(body: ResetPasswordRequest, request: Request):
     return {"message": "Password successfully reset. You can now login with your new password."}
 
 
+@api_router.get("/admin/auth/me")
 @api_router.get("/admin/me")
 async def admin_me(request: Request, response: Response, admin: dict = Depends(get_current_admin)):
     # Renew the secure cookie only after a valid authenticated request.
@@ -1162,13 +1211,13 @@ async def admin_change_password(
     admin: dict = Depends(get_current_admin),
 ):
     admin_doc = await db.admins.find_one({"id": admin["id"]})
-    if not admin_doc or not admin_doc.get("password_hash") or not verify_password(body.current_password, admin_doc["password_hash"]):
+    if not admin_doc or not admin_doc.get("password_hash") or not await run_in_threadpool(verify_password, body.current_password, admin_doc["password_hash"]):
         raise HTTPException(status_code=400, detail="Incorrect current password")
 
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.admins.update_one(
         {"id": admin["id"]},
-        {"$set": {"password_hash": hash_password(body.new_password), "updated_at": now_iso, "password_changed_at": now_iso}}
+        {"$set": {"password_hash": await run_in_threadpool(hash_password, body.new_password), "updated_at": now_iso, "password_changed_at": now_iso}}
     )
     return {"message": "Password changed successfully"}
 
@@ -1191,7 +1240,9 @@ async def admin_logout(request: Request, response: Response):
 # ---------------- Worker Authentication Routes ----------------
 @api_router.post("/worker/login")
 async def worker_login(body: WorkerLogin, response: Response, request: Request):
-    rate_limit(request, "worker-login", 15, 60)
+    rate_limit(request, "worker-login", 300, 60)
+    account_key = hashlib.sha256(body.login_id.strip().lower().encode()).hexdigest()
+    rate_limit(request, f"worker-login-account:{account_key}", 15, 60)
     identifier = body.login_id.strip()
     phone = normalize_indian_phone_identifier(identifier)
     base_query = {"archived_at": {"$in": [None, ""]}, "deleted_at": {"$in": [None, ""]}}
@@ -1208,7 +1259,7 @@ async def worker_login(body: WorkerLogin, response: Response, request: Request):
             "login_id": {"$regex": f"^{re.escape(identifier)}$", "$options": "i"},
         }).to_list(2)
     worker = matches[0] if len(matches) == 1 else None
-    if not worker or not worker.get("portal_enabled", False) or not worker.get("password_hash") or not verify_password(body.password, worker["password_hash"]):
+    if not worker or not worker.get("portal_enabled", False) or not worker.get("password_hash") or not await run_in_threadpool(verify_password, body.password, worker["password_hash"]):
         raise HTTPException(
             status_code=401,
             detail="Invalid Student ID / Phone Number or Password."
@@ -1229,7 +1280,7 @@ async def worker_login(body: WorkerLogin, response: Response, request: Request):
         "session_token": session_token,
         "worker_id": worker["id"],
         "business_id": biz_id,
-        "expires_at": (now_dt + timedelta(seconds=SESSION_MAX_AGE)).isoformat(),
+        "expires_at": now_dt + timedelta(seconds=SESSION_MAX_AGE),
         "created_at": now_dt.isoformat(),
     })
 
@@ -1281,13 +1332,13 @@ async def worker_logout(request: Request, response: Response):
 @api_router.post("/worker/change-password")
 async def worker_change_password(body: WorkerChangePassword, worker: dict = Depends(get_current_worker)):
     worker_doc = await db.workers.find_one({"id": worker["id"], "business_id": worker["business_id"]})
-    if not worker_doc or not worker_doc.get("password_hash") or not verify_password(body.current_password, worker_doc["password_hash"]):
+    if not worker_doc or not worker_doc.get("password_hash") or not await run_in_threadpool(verify_password, body.current_password, worker_doc["password_hash"]):
         raise HTTPException(status_code=400, detail="Incorrect current password")
 
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.workers.update_one(
         {"id": worker["id"]},
-        {"$set": {"password_hash": hash_password(body.new_password), "updated_at": now_iso}}
+        {"$set": {"password_hash": await run_in_threadpool(hash_password, body.new_password), "updated_at": now_iso}}
     )
     await db.worker_sessions.delete_many({"worker_id": worker["id"]})
     return {"message": "Password changed successfully"}
@@ -1408,7 +1459,12 @@ async def worker_reset_password(body: ResetPasswordRequest, request: Request):
         raise HTTPException(status_code=400, detail="Password reset link has expired (valid for 30 mins)")
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    new_hash = hash_password(body.new_password)
+    new_hash = await run_in_threadpool(hash_password, body.new_password)
+    claimed = await db.password_reset_tokens.update_one(
+        {"id": reset_doc["id"], "used_at": None}, {"$set": {"used_at": now_iso}}
+    )
+    if claimed.modified_count != 1:
+        raise HTTPException(status_code=400, detail="Invalid or expired password reset link")
     await db.workers.update_one(
         {"id": target_worker_id},
         {"$set": {"password_hash": new_hash, "updated_at": now_iso}}
@@ -1597,7 +1653,7 @@ async def create_worker(body: WorkerCreate, admin: dict = Depends(get_current_ad
             raise HTTPException(status_code=503, detail="Could not generate a unique Worker ID. Please try again.")
 
     if doc.get("portal_enabled") and raw_pwd:
-        doc["password_hash"] = hash_password(raw_pwd)
+        doc["password_hash"] = await run_in_threadpool(hash_password, raw_pwd)
     else:
         doc["password_hash"] = None
 
@@ -1669,7 +1725,7 @@ async def update_worker(worker_id: str, body: WorkerUpdate, admin: dict = Depend
     if raw_pwd and len(raw_pwd) < 6:
         raise HTTPException(status_code=422, detail="Worker password must be at least 6 characters")
     if raw_pwd:
-        update_data["password_hash"] = hash_password(raw_pwd)
+        update_data["password_hash"] = await run_in_threadpool(hash_password, raw_pwd)
 
     # Invalidate sessions if deactivated or portal disabled
     if update_data.get("status") == "INACTIVE" or update_data.get("portal_enabled") is False or raw_pwd:
@@ -1730,7 +1786,7 @@ async def reset_worker_password_by_admin(
         {"id": worker_id, "business_id": biz_id},
         {
             "$set": {
-                "password_hash": hash_password(body.new_password),
+                "password_hash": await run_in_threadpool(hash_password, body.new_password),
                 "portal_enabled": True,
                 "login_id": login_id,
                 "updated_at": now_iso,
@@ -1763,7 +1819,7 @@ async def serve_worker_photo(filename: str):
     return FileResponse(
         path=photo_path,
         media_type=media_type,
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "no-store, private"},
     )
 
 
@@ -2001,7 +2057,7 @@ async def get_worker_salary_slip_pdf(
         today_date_str=get_today_date(),
     )
 
-    pdf_bytes = generate_salary_slip_pdf(
+    pdf_bytes = await run_in_threadpool(generate_salary_slip_pdf,
         worker=worker,
         business=business,
         summary=summary,
@@ -2448,7 +2504,7 @@ async def get_worker_self_salary_slip_pdf(
         today_date_str=get_today_date(),
     )
 
-    pdf_bytes = generate_salary_slip_pdf(
+    pdf_bytes = await run_in_threadpool(generate_salary_slip_pdf,
         worker=worker,
         business=business,
         summary=summary,
@@ -2714,40 +2770,34 @@ async def deliver_student_slots_push(*, business_id: str, slots: list, title: st
 async def list_admin_conversations(admin: dict = Depends(get_current_admin)):
     """Returns conversation list for all workers in the admin's business."""
     biz_id = admin["business_id"]
-    workers = await db.workers.find({"business_id": biz_id}, {"_id": 0}).to_list(1000)
-    
+    workers = await db.workers.find({"business_id": biz_id}, {"_id": 0, "password_hash": 0}).to_list(None)
+    conversations = await db.conversations.find({"business_id": biz_id}, {"_id": 0}).to_list(None)
+    by_worker = {conv["worker_id"]: conv for conv in conversations}
+    missing = [w for w in workers if w["id"] not in by_worker]
+    if missing:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        await db.conversations.bulk_write([
+            UpdateOne({"business_id": biz_id, "worker_id": w["id"]}, {"$setOnInsert": {
+                "id": str(uuid.uuid4()), "business_id": biz_id, "worker_id": w["id"],
+                "updated_at": now_iso, "last_message": None,
+            }}, upsert=True) for w in missing
+        ], ordered=False)
+        conversations = await db.conversations.find({"business_id": biz_id}, {"_id": 0}).to_list(None)
+        by_worker = {conv["worker_id"]: conv for conv in conversations}
+    unread = await db.messages.aggregate([
+        {"$match": {"business_id": biz_id, "sender_type": "worker", "read_at": None,
+                    **visible_message_filter()}},
+        {"$group": {"_id": "$conversation_id", "count": {"$sum": 1}}},
+    ]).to_list(None)
+    counts = {row["_id"]: row["count"] for row in unread}
     results = []
-    for w in workers:
-        wid = w["id"]
-        conv = await db.conversations.find_one({"business_id": biz_id, "worker_id": wid}, {"_id": 0})
-        if not conv:
-            conv_id = str(uuid.uuid4())
-            conv_doc = {
-                "id": conv_id,
-                "business_id": biz_id,
-                "worker_id": wid,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-                "last_message": None,
-            }
-            await db.conversations.insert_one(conv_doc)
-            conv = conv_doc
-
-        # Calculate unread count from worker to owner
-        unread_count = await db.messages.count_documents({
-            "conversation_id": conv["id"],
-            "sender_type": "worker",
-            "read_at": None,
-        })
-
+    for worker in workers:
+        conv = by_worker[worker["id"]]
         results.append({
-            "conversation_id": conv["id"],
-            "worker": w,
-            "unread_count": unread_count,
-            "last_message": conv.get("last_message"),
-            "updated_at": conv.get("updated_at", ""),
+            "conversation_id": conv["id"], "worker": clean_worker_document(worker),
+            "unread_count": counts.get(conv["id"], 0),
+            "last_message": conv.get("last_message"), "updated_at": conv.get("updated_at", ""),
         })
-
-    # Sort by most recent updated_at
     results.sort(key=lambda x: x.get("updated_at", "") or "", reverse=True)
     return results
 
@@ -2755,14 +2805,14 @@ async def list_admin_conversations(admin: dict = Depends(get_current_admin)):
 @api_router.get("/chat/worker-conversation")
 async def get_worker_conversation(user: dict = Depends(get_current_worker)):
     """Returns or creates the private conversation for the current logged-in worker."""
-    worker = await db.workers.find_one({"id": user["worker_id"], "business_id": user["business_id"]}, {"_id": 0})
+    worker = await db.workers.find_one({"id": user["worker_id"], "business_id": user["business_id"]}, {"_id": 0, "password_hash": 0})
     if not worker:
         raise HTTPException(status_code=404, detail="Worker profile not linked.")
 
     biz_id = worker.get("business_id")
     wid = worker["id"]
     
-    conv = await db.conversations.find_one({"business_id": biz_id, "worker_id": wid}, {"_id": 0})
+    conv = await db.conversations.find_one({"business_id": biz_id, "worker_id": wid}, {"_id": 0, "password_hash": 0})
     if not conv:
         conv_id = str(uuid.uuid4())
         conv_doc = {
@@ -2772,8 +2822,8 @@ async def get_worker_conversation(user: dict = Depends(get_current_worker)):
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "last_message": None,
         }
-        await db.conversations.insert_one(conv_doc)
-        conv = conv_doc
+        await db.conversations.update_one({"business_id": biz_id, "worker_id": wid}, {"$setOnInsert": conv_doc}, upsert=True)
+        conv = await db.conversations.find_one({"business_id": biz_id, "worker_id": wid}, {"_id": 0})
 
     unread_count = await db.messages.count_documents({
         "conversation_id": conv["id"],
@@ -2783,7 +2833,7 @@ async def get_worker_conversation(user: dict = Depends(get_current_worker)):
 
     return {
         "conversation_id": conv["id"],
-        "worker": worker,
+        "worker": clean_worker_document(worker),
         "unread_count": unread_count,
         "last_message": conv.get("last_message"),
     }
@@ -2961,6 +3011,8 @@ async def voice_expiration_loop() -> None:
 
 async def cleanup_old_meal_data() -> int:
     """Delete meal_selections and attendance records older than 2 calendar months."""
+    if os.environ.get("ENABLE_MEAL_DATA_CLEANUP", "false").lower() != "true":
+        return 0
     cutoff_dt = datetime.now(timezone.utc).replace(day=1) - timedelta(days=1)
     cutoff_dt = cutoff_dt.replace(day=1)  # first day of the month 2 months ago
     cutoff_dt = cutoff_dt - timedelta(days=31)  # go back one more month
@@ -3566,7 +3618,7 @@ async def get_audio_file(message_id: str, request: Request):
             media_type=mime_type,
             headers={
                 "Accept-Ranges": "bytes",
-                "Cache-Control": "public, max-age=86400",
+                "Cache-Control": "no-store, private",
             }
         )
 
@@ -3580,7 +3632,7 @@ async def get_audio_file(message_id: str, request: Request):
         media_type=mime_type,
         headers={
             "Accept-Ranges": "bytes",
-            "Cache-Control": "public, max-age=86400",
+            "Cache-Control": "no-store, private",
         }
     )
 
@@ -3595,15 +3647,10 @@ async def root():
     }
 
 
-@api_router.get("/health")
-async def health():
-    return {"status": "ok"}
-
-
 @api_router.get("/ready")
 async def ready():
     try:
-        await db.command("ping")
+        await asyncio.wait_for(db.command("ping"), timeout=5)
         return {"status": "ready"}
     except Exception as exc:
         logger.error("Readiness dependency check failed", exc_info=exc)
@@ -3874,11 +3921,24 @@ async def renew_student_subscription(
 @api_router.get("/admin/low-balance-students")
 async def get_low_balance_students(admin: dict = Depends(get_current_admin)):
     biz_id = admin["business_id"]
-    students = await db.workers.find({"business_id": biz_id, "status": "ACTIVE"}, {"_id": 0, "password_hash": 0}).to_list(500)
+    students = await db.workers.find({"business_id": biz_id, "status": "ACTIVE"}, {"_id": 0, "password_hash": 0}).to_list(None)
 
+    ids = [student["id"] for student in students]
+    if not ids:
+        return []
+    preloaded = {"menu": await db.meal_settings.find_one({"business_id": biz_id}, {"_id": 0}) or {},
+                 "leaves": defaultdict(list), "selections": defaultdict(list)}
+    starts = [s.get(key) for s in students for key in ("joining_date", "lunch_start_date", "dinner_start_date") if s.get(key)]
+    earliest = min(starts) if starts else get_today_date()
+    leaves = await db.worker_leaves.find({"business_id": biz_id, "worker_id": {"$in": ids}, "status": "ACTIVE"}, {"_id": 0}).to_list(None)
+    selections = await db.meal_selections.find({"business_id": biz_id, "worker_id": {"$in": ids}, "date": {"$gte": earliest, "$lte": get_today_date()}}, {"_id": 0}).to_list(None)
+    for leave in leaves:
+        preloaded["leaves"][leave["worker_id"]].append(leave)
+    for selection in selections:
+        preloaded["selections"][selection["worker_id"]].append(selection)
     low_balance_list = []
     for s in students:
-        stats = await compute_worker_meal_consumption(biz_id, s)
+        stats = await compute_worker_meal_consumption(biz_id, s, preloaded=preloaded)
         rem = stats.get("total_remaining")
         is_exp = stats.get("is_expired", False)
         days_left = stats.get("validity_days_left", 45)
@@ -3907,7 +3967,7 @@ async def get_low_balance_students(admin: dict = Depends(get_current_admin)):
 
 # ---------------- Meal Stats & Calendar ----------------
 
-async def compute_worker_meal_consumption(biz_id: str, worker: dict):
+async def compute_worker_meal_consumption(biz_id: str, worker: dict, *, preloaded: Optional[dict] = None):
     wid = worker["id"]
     joining_date = worker.get("joining_date") or get_today_date()
     meal_plan_type = worker.get("meal_plan_type") or "BOTH"
@@ -3931,7 +3991,7 @@ async def compute_worker_meal_consumption(biz_id: str, worker: dict):
     has_dinner = meal_plan_type in ("BOTH", "DINNER_ONLY")
 
     # Fetch meal window timings
-    menu_doc = await db.meal_settings.find_one({"business_id": biz_id}, {"_id": 0})
+    menu_doc = preloaded["menu"] if preloaded is not None else (await db.meal_settings.find_one({"business_id": biz_id}, {"_id": 0}) or {})
     windows = menu_doc.get("windows", DEFAULT_MEAL_WINDOWS) if menu_doc else DEFAULT_MEAL_WINDOWS
     lunch_end = windows.get("lunch", {}).get("end_time", "11:00").strip() or "11:00"
     dinner_end = windows.get("dinner", {}).get("end_time", "19:00").strip() or "19:00"
@@ -3972,15 +4032,15 @@ async def compute_worker_meal_consumption(biz_id: str, worker: dict):
         cur += timedelta(days=1)
 
     # Leaves
-    leaves = await db.worker_leaves.find(
+    leaves = preloaded["leaves"].get(wid, []) if preloaded is not None else await db.worker_leaves.find(
         {"business_id": biz_id, "worker_id": wid, "status": "ACTIVE"},
         {"_id": 0}
     ).to_list(100)
     leave_dates = set()
     for lv in leaves:
         try:
-            c_lv = datetime.strptime(lv["start_date"], "%Y-%m-%d")
-            e_lv = datetime.strptime(lv["end_date"], "%Y-%m-%d")
+            c_lv = max(start_dt, datetime.strptime(lv["start_date"], "%Y-%m-%d"))
+            e_lv = min(today_dt, datetime.strptime(lv["end_date"], "%Y-%m-%d"))
             while c_lv <= e_lv:
                 leave_dates.add(c_lv.strftime("%Y-%m-%d"))
                 c_lv += timedelta(days=1)
@@ -3988,7 +4048,7 @@ async def compute_worker_meal_consumption(biz_id: str, worker: dict):
             pass
 
     # Selections within enrolled dates
-    selections = await db.meal_selections.find(
+    selections = preloaded["selections"].get(wid, []) if preloaded is not None else await db.meal_selections.find(
         {"business_id": biz_id, "worker_id": wid, "date": {"$in": enrolled_dates}},
         {"_id": 0}
     ).to_list(3000)
@@ -4165,7 +4225,7 @@ async def compute_student_meal_calendar(biz_id: str, wid: str, month: Optional[s
     stats = await compute_worker_meal_consumption(biz_id, worker)
 
     # Fetch meal window timings
-    menu_doc = await db.meal_settings.find_one({"business_id": biz_id}, {"_id": 0})
+    menu_doc = await db.meal_settings.find_one({"business_id": biz_id}, {"_id": 0}) or {}
     windows = menu_doc.get("windows", DEFAULT_MEAL_WINDOWS) if menu_doc else DEFAULT_MEAL_WINDOWS
     lunch_end = windows.get("lunch", {}).get("end_time", "11:00").strip() or "11:00"
     dinner_end = windows.get("dinner", {}).get("end_time", "19:00").strip() or "19:00"
@@ -4342,7 +4402,7 @@ async def get_admin_student_meal_pdf(
     calendar_data = await compute_student_meal_calendar(biz_id, worker_id, month)
     payments = await db.payments.find({"business_id": biz_id, "worker_id": worker_id, "deleted_at": None}, {"_id": 0}).sort("date", -1).to_list(10)
 
-    pdf_bytes = generate_student_meal_statement_pdf(
+    pdf_bytes = await run_in_threadpool(generate_student_meal_statement_pdf,
         worker=worker,
         business=business,
         month=month,
@@ -4382,7 +4442,7 @@ async def get_worker_self_meal_pdf(
     calendar_data = await compute_student_meal_calendar(biz_id, wid, month)
     payments = await db.payments.find({"business_id": biz_id, "worker_id": wid, "deleted_at": None}, {"_id": 0}).sort("date", -1).to_list(10)
 
-    pdf_bytes = generate_student_meal_statement_pdf(
+    pdf_bytes = await run_in_threadpool(generate_student_meal_statement_pdf,
         worker=worker,
         business=business,
         month=month,
@@ -5236,13 +5296,13 @@ async def get_meal_headcount(
     admin: dict = Depends(get_current_admin)
 ):
     biz_id = admin["business_id"]
-    dt = datetime.strptime(date, "%Y-%m-%d")
+    dt = parse_request_date(date)
     day_key = dt.strftime("%A").lower()
 
-    menu_doc = await db.meal_settings.find_one({"business_id": biz_id}, {"_id": 0})
+    menu_doc = await db.meal_settings.find_one({"business_id": biz_id}, {"_id": 0}) or {}
     days = menu_doc.get("days", DEFAULT_WEEKLY_MENU) if menu_doc else DEFAULT_WEEKLY_MENU
     windows = menu_doc.get("windows", DEFAULT_MEAL_WINDOWS) if menu_doc else DEFAULT_MEAL_WINDOWS
-    day_data = days.get(day_key, DEFAULT_WEEKLY_MENU.get(day_key, {}))
+    day_data = deepcopy(days.get(day_key, DEFAULT_WEEKLY_MENU.get(day_key, {})))
 
     # Support legacy structure if day_data had standard_mode directly
     lunch_menu = day_data.get("lunch") or {
@@ -5285,14 +5345,14 @@ async def get_meal_headcount(
         lunch_menu["premium_options"] = (menu_doc.get("premium_items") or DEFAULT_PREMIUM_ITEMS)
         dinner_menu["premium_options"] = (menu_doc.get("premium_items") or DEFAULT_PREMIUM_ITEMS)
 
-    students = await db.workers.find({"business_id": biz_id, "status": "ACTIVE"}, {"_id": 0}).to_list(500)
-    selections = await db.meal_selections.find({"business_id": biz_id, "date": date}, {"_id": 0}).to_list(1000)
+    students = await db.workers.find({"business_id": biz_id, "status": "ACTIVE"}, {"_id": 0}).to_list(None)
+    selections = await db.meal_selections.find({"business_id": biz_id, "date": date}, {"_id": 0}).to_list(None)
     active_leaves = await db.worker_leaves.find({
         "business_id": biz_id,
         "status": "ACTIVE",
         "start_date": {"$lte": date},
         "end_date": {"$gte": date}
-    }, {"_id": 0}).to_list(500)
+    }, {"_id": 0}).to_list(None)
     leave_worker_ids = {lv["worker_id"] for lv in active_leaves}
 
     # Map by (worker_id, meal_slot)
@@ -5487,13 +5547,13 @@ async def get_student_today_meal(
         raise HTTPException(status_code=404, detail="Student profile not found")
 
     target_date = date or get_today_date()
-    dt = datetime.strptime(target_date, "%Y-%m-%d")
+    dt = parse_request_date(target_date)
     day_key = dt.strftime("%A").lower()
 
-    menu_doc = await db.meal_settings.find_one({"business_id": biz_id}, {"_id": 0})
+    menu_doc = await db.meal_settings.find_one({"business_id": biz_id}, {"_id": 0}) or {}
     days = menu_doc.get("days", DEFAULT_WEEKLY_MENU) if menu_doc else DEFAULT_WEEKLY_MENU
     windows = menu_doc.get("windows", DEFAULT_MEAL_WINDOWS) if menu_doc else DEFAULT_MEAL_WINDOWS
-    day_data = days.get(day_key, DEFAULT_WEEKLY_MENU.get(day_key, {}))
+    day_data = deepcopy(days.get(day_key, DEFAULT_WEEKLY_MENU.get(day_key, {})))
 
     lunch_menu = day_data.get("lunch") or {
         "is_closed": False,
@@ -5696,6 +5756,18 @@ async def save_student_meal_selection(
     body: dict = Body(...),
     user: dict = Depends(get_current_worker)
 ):
+    for field, max_length in {"date": 10, "meal_slot": 10, "action": 16, "selection_type": 32,
+                              "selected_item_id": 100, "selected_item_name": 200,
+                              "notes": 1000, "delivery_option": 16, "delivery_address": 1000,
+                              "delivery_notes": 1000}.items():
+        value = body.get(field)
+        if value is not None and (not isinstance(value, str) or len(value) > max_length):
+            raise HTTPException(status_code=422, detail=f"Invalid {field}")
+    parse_request_date(body.get("date") or get_today_date())
+    if (body.get("meal_slot") or "lunch").lower() not in {"lunch", "dinner"}:
+        raise HTTPException(status_code=422, detail="Meal slot must be lunch or dinner")
+    if (body.get("action") or "CONFIRM").upper() not in {"CONFIRM", "CANCEL"}:
+        raise HTTPException(status_code=422, detail="Action must be CONFIRM or CANCEL")
     biz_id = user["business_id"]
     wid = user["worker_id"]
     worker = await db.workers.find_one({"id": wid, "business_id": biz_id}, {"_id": 0})
@@ -5756,11 +5828,11 @@ async def save_student_meal_selection(
         raise HTTPException(status_code=400, detail="You are marked on vacation/home leave for this date. End your leave first to resume meals.")
 
     # Window check & cutoff enforcement
-    menu_doc = await db.meal_settings.find_one({"business_id": biz_id}, {"_id": 0})
+    menu_doc = await db.meal_settings.find_one({"business_id": biz_id}, {"_id": 0}) or {}
     days = menu_doc.get("days", DEFAULT_WEEKLY_MENU) if menu_doc else DEFAULT_WEEKLY_MENU
     windows = menu_doc.get("windows", DEFAULT_MEAL_WINDOWS) if menu_doc else DEFAULT_MEAL_WINDOWS
     
-    dt = datetime.strptime(target_date, "%Y-%m-%d")
+    dt = parse_request_date(target_date)
     day_key = dt.strftime("%A").lower()
     day_data = days.get(day_key, {})
     slot_menu = day_data.get(slot_key, {})
@@ -5865,9 +5937,15 @@ async def production_security(request: Request, call_next):
             if not cookie_token or not header_token or not secrets.compare_digest(cookie_token, header_token):
                 return JSONResponse({"detail": "CSRF validation failed", "request_id": request_id}, status_code=403)
         response = await call_next(request)
+    except DuplicateKeyError:
+        response = JSONResponse({"detail": "A matching record already exists. Refresh and try again.", "request_id": request_id}, status_code=409)
+    except PyMongoError:
+        logger.exception("Database request failed request_id=%s", request_id)
+        response = JSONResponse({"detail": "Database temporarily unavailable. Please try again.", "request_id": request_id}, status_code=503)
     except Exception as exc:
         logger.exception("Unhandled request error request_id=%s", request_id)
         response = JSONResponse({"detail": "Internal server error", "request_id": request_id}, status_code=500)
+    response.headers.setdefault("Cache-Control", "no-store, private")
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -5963,8 +6041,10 @@ async def startup():
         await db.revoked_admin_tokens.create_index("token_hash", unique=True)
         await db.revoked_admin_tokens.create_index("expires_at", expireAfterSeconds=0)
         logger.info("Database indexes successfully verified.")
-    except Exception as e:
-        logger.warning(f"Index creation notice: {e}")
+    except Exception:
+        logger.exception("Required index creation failed; resolve duplicate data before deployment")
+        raise
+    await ensure_production_indexes(db)
 
     # 2. Backward-compatibility data migration: backfill records created before
     #    multi-business support. Any records missing a business_id are assigned
@@ -5975,7 +6055,7 @@ async def startup():
             {"$or": [{"business_id": {"$exists": False}}, {"business_id": None}, {"business_id": ""}]},
             {"_id": 0}
         )
-        if orphan_worker:
+        if orphan_worker and os.environ.get("ENABLE_LEGACY_BUSINESS_BACKFILL", "false").lower() == "true":
             # Find the oldest admin to use as the reference owner for orphaned records
             ref_admin = await db.admins.find_one({}, sort=[("created_at", ASCENDING)])
             if ref_admin:
@@ -6018,7 +6098,9 @@ async def startup():
         if admin_count == 0:
             default_email = os.environ.get("ADMIN_EMAIL", "admin@ayushmankitchen.com").strip().lower()
             default_user = os.environ.get("ADMIN_USERNAME", "admin").strip().lower()
-            default_pwd = os.environ.get("ADMIN_PASSWORD", "admin123")
+            default_pwd = os.environ.get("ADMIN_PASSWORD", "")
+            if not default_pwd or len(default_pwd) < 12:
+                raise RuntimeError("Initial admin requires an explicit ADMIN_PASSWORD of at least 12 characters")
             admin_name = os.environ.get("ADMIN_NAME", "Ayushman Kitchen Admin")
             biz_name = os.environ.get("BUSINESS_NAME", "Ayushman Kitchen")
 
@@ -6031,7 +6113,7 @@ async def startup():
                 "name": admin_name,
                 "username": default_user,
                 "email": default_email,
-                "password_hash": hash_password(default_pwd),
+                "password_hash": await run_in_threadpool(hash_password, default_pwd),
                 "is_active": True,
                 "created_at": now_iso,
                 "updated_at": now_iso,
@@ -6049,15 +6131,17 @@ async def startup():
             }
             await db.businesses.insert_one(biz_doc)
             logger.info(f"Default admin initialized with email: {default_email}, username: {default_user}")
-    except Exception as e:
-        logger.warning(f"Admin initialization notice: {e}")
+    except Exception:
+        logger.exception("Admin initialization failed")
+        raise
 
     _voice_expiration_task = asyncio.create_task(voice_expiration_loop())
     _meal_cleanup_task = asyncio.create_task(meal_cleanup_loop())
     _meal_reminder_task = asyncio.create_task(meal_reminder_loop())
     # Run an immediate cleanup on startup to remove old data right away
-    asyncio.create_task(cleanup_old_meal_data())
-    logger.info("Meal data auto-cleanup scheduled: records older than 2 months will be deleted daily.")
+    if os.environ.get("ENABLE_MEAL_DATA_CLEANUP", "false").lower() == "true":
+        await cleanup_old_meal_data()
+    logger.info("Meal data cleanup enabled=%s", os.environ.get("ENABLE_MEAL_DATA_CLEANUP", "false"))
     logger.info("Automated meal window reminders & admin cutoff push notifications loop started.")
 
 

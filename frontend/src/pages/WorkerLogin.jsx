@@ -1,3 +1,4 @@
+import { readStorage, writeStorage } from "@/lib/safeStorage";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -27,7 +28,7 @@ export default function WorkerLogin() {
   const { worker, loading: authLoading, login } = useWorkerAuth();
   const [loading, setLoading] = useState(false);
 
-  const [loginId, setLoginId] = useState(() => localStorage.getItem("workforce_last_worker_identifier") || "");
+  const [loginId, setLoginId] = useState(() => readStorage("workforce_last_worker_identifier") || "");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
@@ -51,7 +52,7 @@ export default function WorkerLogin() {
     setLoading(true);
     try {
       await login(loginId.trim(), password);
-      localStorage.setItem("workforce_last_worker_identifier", loginId.trim());
+      writeStorage("workforce_last_worker_identifier", loginId.trim());
       setPassword("");
       toast.success("Signed in successfully");
       navigate("/student");
@@ -149,7 +150,7 @@ export default function WorkerLogin() {
                     aria-label="Clear remembered identifier"
                     onClick={() => {
                       setLoginId("");
-                      localStorage.removeItem("workforce_last_worker_identifier");
+                      writeStorage("workforce_last_worker_identifier", null);
                     }}
                     className="absolute right-2 top-2 p-1 text-slate-400 hover:text-slate-700"
                   >

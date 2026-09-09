@@ -1,3 +1,6 @@
+import { startVisiblePolling } from "@/lib/polling";
+import { fetchAllWorkers } from "@/lib/workers";
+import { readStorage, writeStorage } from "@/lib/safeStorage";
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -67,7 +70,7 @@ export default function AdminDashboard() {
     const tab = params.get("tab");
     if (tab && VALID_VIEWS.includes(tab)) return tab;
     if (params.has("conversation")) return "messages";
-    const stored = localStorage.getItem("admin_active_tab");
+    const stored = readStorage("admin_active_tab");
     if (stored && VALID_VIEWS.includes(stored)) return stored;
     return "overview";
   });
@@ -75,7 +78,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (view) {
       try {
-        localStorage.setItem("admin_active_tab", view);
+        writeStorage("admin_active_tab", view);
         const url = new URL(window.location);
         url.searchParams.set("tab", view);
         window.history.replaceState({}, "", url.toString());
@@ -93,8 +96,7 @@ export default function AdminDashboard() {
 
   const loadWorkers = useCallback(async () => {
     try {
-      const res = await adminApi.get("/workers");
-      setWorkers(res.data);
+      setWorkers(await fetchAllWorkers(adminApi));
     } catch (e) {
       toast.error(apiError(e));
     }
@@ -133,9 +135,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (!admin) return undefined;
-    const interval = setInterval(() => {
-      loadUnreadMessages();
-    }, 4000);
+    const stopPolling = startVisiblePolling(loadUnreadMessages, 30000);
 
     const unsubscribe = onPushNotification((data) => {
       loadUnreadMessages();
@@ -145,7 +145,7 @@ export default function AdminDashboard() {
     });
 
     return () => {
-      clearInterval(interval);
+      stopPolling();
       if (typeof unsubscribe === "function") {
         unsubscribe();
       }
@@ -3522,8 +3522,7 @@ function MessagesSection({ workers, admin, onUnreadChange }) {
     setFirstUnreadId(null);
     setMessages([]);
     loadMessages();
-    const interval = setInterval(loadMessages, 3500);
-    return () => clearInterval(interval);
+    return startVisiblePolling(loadMessages, 5000);
   }, [loadMessages]);
 
   const handleSendText = async (e) => {

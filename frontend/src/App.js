@@ -1,3 +1,4 @@
+import ErrorBoundary from "@/components/ErrorBoundary";
 import { useEffect } from "react";
 import "./App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
@@ -43,6 +44,7 @@ function App() {
 
   return (
     <div className="App">
+      <ErrorBoundary>
       <BrowserRouter>
         <AdminAuthProvider>
           <WorkerAuthProvider>
@@ -52,6 +54,7 @@ function App() {
           </WorkerAuthProvider>
         </AdminAuthProvider>
       </BrowserRouter>
+      </ErrorBoundary>
     </div>
   );
 }

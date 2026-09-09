@@ -1,0 +1,46 @@
+# Apply only after checking the existing production database and taking a backup.
+services:
+  - type: web
+    name: ayushman-kitchen
+    runtime: python
+    plan: standard
+    region: singapore
+    buildCommand: pip install -r backend/requirements.lock
+    startCommand: python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 5
+    healthCheckPath: /api/ready
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: ENVIRONMENT
+        value: production
+      - key: MONGO_URL
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: COOKIE_SECURE
+        value: 'true'
+      - key: COOKIE_SAMESITE
+        value: lax
+      - key: ALLOW_ADMIN_SIGNUP
+        value: 'false'
+      - key: ENABLE_MEAL_DATA_CLEANUP
+        value: 'false'
+      - key: MEDIA_STORAGE
+        value: cloudinary
+      - key: CLOUDINARY_URL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: PASSWORD_RESET_URL
+        sync: false

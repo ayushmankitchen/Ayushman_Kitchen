@@ -31,6 +31,7 @@ async def send(subscription: dict[str, Any], payload: dict[str, Any]) -> bool:
             vapid_private_key=os.environ["VAPID_PRIVATE_KEY"],
             vapid_claims={"sub": os.environ["VAPID_SUBJECT"]},
             ttl=86400,
+            timeout=10,
             headers={
                 "Urgency": "high",
             },

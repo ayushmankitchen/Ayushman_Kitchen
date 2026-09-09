@@ -1,3 +1,5 @@
+import { startVisiblePolling } from "@/lib/polling";
+import { readStorage, writeStorage } from "@/lib/safeStorage";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { workerApi, apiError } from "@/lib/api";
@@ -469,13 +471,13 @@ export default function WorkerDashboard() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("tab")) return params.get("tab");
     if (params.has("conversation")) return "messages";
-    return localStorage.getItem("student_active_tab") || "home";
+    return readStorage("student_active_tab") || "home";
   });
 
   useEffect(() => {
     if (tab) {
       try {
-        localStorage.setItem("student_active_tab", tab);
+        writeStorage("student_active_tab", tab);
         const url = new URL(window.location);
         url.searchParams.set("tab", tab);
         window.history.replaceState({}, "", url.toString());
@@ -785,12 +787,12 @@ export default function WorkerDashboard() {
 
   useEffect(() => {
     if (!user) return undefined;
-    const interval = setInterval(() => {
-      loadChat();
+    const stopChatPolling = startVisiblePolling(loadChat, tab === "messages" ? 5000 : 30000);
+    const stopDataPolling = startVisiblePolling(async () => {
       if (tab === "home" || tab === "menu") {
-        loadData();
+        await Promise.all([loadData(), loadTodayMeal(), loadMealStats()]);
       }
-    }, 4000);
+    }, 60000);
 
     const unsubscribe = onPushNotification((data) => {
       loadChat();
@@ -801,10 +803,11 @@ export default function WorkerDashboard() {
     });
 
     return () => {
-      clearInterval(interval);
+      stopChatPolling();
+      stopDataPolling();
       unsubscribe();
     };
-  }, [user, tab, loadChat, loadData]);
+  }, [user, tab, loadChat, loadData, loadTodayMeal, loadMealStats]);
 
   const handleSendText = async (e) => {
     e?.preventDefault();

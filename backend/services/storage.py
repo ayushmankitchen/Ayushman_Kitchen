@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from starlette.concurrency import run_in_threadpool
 import uuid
 from pathlib import Path
 from typing import Any
@@ -97,9 +98,9 @@ class VoiceStorage:
                     api_secret=os.environ["CLOUDINARY_API_SECRET"],
                     secure=True,
                 )
-                result = cloudinary.uploader.upload(
+                result = await run_in_threadpool(cloudinary.uploader.upload,
                     content, public_id=f"workforce/voice/{asset_id}", resource_type="video",
-                    type="authenticated", overwrite=False,
+                    type="authenticated", overwrite=False, timeout=20,
                 )
             except Exception as exc:
                 raise HTTPException(status_code=502, detail="Voice storage is temporarily unavailable.") from exc
@@ -138,7 +139,7 @@ class VoiceStorage:
     async def delete_voice_message(self, asset: dict[str, Any]) -> None:
         if asset.get("storage_provider") == "cloudinary":
             import cloudinary.uploader
-            cloudinary.uploader.destroy(asset["public_id"], resource_type=asset.get("resource_type", "video"), type="authenticated")
+            await run_in_threadpool(cloudinary.uploader.destroy, asset["public_id"], resource_type=asset.get("resource_type", "video"), type="authenticated", timeout=20)
         else:
             path = UPLOAD_DIR / os.path.basename(str(asset.get("public_id", "")))
             if path.is_file():
@@ -166,12 +167,12 @@ class ProfilePhotoStorage:
                     api_secret=os.environ["CLOUDINARY_API_SECRET"],
                     secure=True,
                 )
-                result = cloudinary.uploader.upload(
+                result = await run_in_threadpool(cloudinary.uploader.upload,
                     content,
                     public_id=f"workforce/photos/{asset_id}",
                     resource_type="image",
                     type="upload",
-                    overwrite=False,
+                    overwrite=False, timeout=20,
                     transformation=[
                         {"width": 512, "height": 512, "crop": "fill", "gravity": "face"},
                         {"quality": "auto", "fetch_format": "auto"},
@@ -221,7 +222,7 @@ class ProfilePhotoStorage:
                     api_secret=os.environ.get("CLOUDINARY_API_SECRET", ""),
                     secure=True,
                 )
-                cloudinary.uploader.destroy(public_id, resource_type="image", type="upload")
+                await run_in_threadpool(cloudinary.uploader.destroy, public_id, resource_type="image", type="upload", timeout=20)
             except Exception:
                 pass
         else:

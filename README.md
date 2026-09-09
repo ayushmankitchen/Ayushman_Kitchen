@@ -49,7 +49,7 @@ It eliminates traditional paper mess registers, confusing attendance disputes, a
 - **Branding & Mess Controls**: Change mess name, upload logo via Cloudinary, update notice ticker, and modify meal subscription prices.
 
 ### 4. ⚙️ Automated Database Maintenance
-- **2-Month Automatic Cleanup Background Task**: A built-in background loop automatically purges meal selection records older than 2 calendar months (60 days) to keep MongoDB Atlas optimized and lightning-fast.
+- Historical meal and attendance cleanup is disabled by default to preserve quota and billing evidence. Enable deletion only after a reviewed archival and backup procedure.
 
 ---
 
@@ -110,6 +110,10 @@ ayushman-kitchen/
 
 ---
 
+## Production audit and deployment
+
+See [the production audit](PRODUCTION_AUDIT.md) for findings, capacity results, remaining risks, and verified live checks. Use [the deployment runbook](DEPLOYMENT.md) before deploying. `render.yaml` provides a reviewed Render configuration; it does not provision anything by itself.
+
 ## ⚙️ Environment Variables
 
 ### Backend (`backend/.env`)
@@ -151,8 +155,9 @@ cd Ayushman_Kitchen
 cd backend
 python -m venv venv
 source venv/bin/activate    # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+pip install -r requirements.lock
+cd ..
+backend/venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ### 3. Configure Frontend (in a new terminal)
