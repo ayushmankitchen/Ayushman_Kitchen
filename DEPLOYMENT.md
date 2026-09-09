@@ -3,8 +3,9 @@
 This runbook applies to the **MongoDB / React CRA application in this workspace**.
 GitHub `main` at `9c1a180` is an unrelated PostgreSQL / Vite rewrite. Do not point
 these commands at that branch, combine the databases, or replace either database
-with an empty one. The tested changes are committed on a separate audit branch. GitHub push currently
-requires repository write access.
+with an empty one. The tested changes are published on the separate branch
+`audit/production-hardening-2026-09-09` at commit `4ce7bd6`; its GitHub Actions
+production checks completed successfully.
 
 ## Recommended hosting
 
