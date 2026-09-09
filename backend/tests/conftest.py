@@ -26,7 +26,7 @@ def pytest_addoption(parser):
 
 def pytest_collection_modifyitems(config, items):
     for item in items:
-        uses_database = item.path.name == "test_auth.py" or item.name == "test_complete_forgot_and_reset_password_flow"
+        uses_database = item.path.name in {"test_auth.py", "test_delivery.py"} or item.name == "test_complete_forgot_and_reset_password_flow"
         if uses_database and not config.getoption("--integration"):
             item.add_marker(pytest.mark.skip(reason="Requires isolated MongoDB; run with --integration"))
 

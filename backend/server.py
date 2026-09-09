@@ -22,6 +22,7 @@ import httpx
 import time
 import secrets
 import hashlib
+import math
 import re
 import asyncio
 from collections import defaultdict, deque
@@ -5919,6 +5920,283 @@ async def save_student_meal_selection(
     return {"ok": True, "selection": doc}
 
 
+# ---------------- Live Meal Delivery Tracking ----------------
+class DeliveryLocationUpdate(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    address: Optional[str] = Field(None, max_length=500)
+
+
+class DeliverySessionStart(BaseModel):
+    meal_slot: str
+    driver_name: str = Field("Kitchen Delivery Team", min_length=2, max_length=100)
+    driver_phone: str = Field("", max_length=30)
+    current_lat: Optional[float] = Field(None, ge=-90, le=90)
+    current_lng: Optional[float] = Field(None, ge=-180, le=180)
+
+    @field_validator("meal_slot")
+    @classmethod
+    def valid_meal_slot(cls, value: str) -> str:
+        slot = value.strip().lower()
+        if slot not in {"lunch", "dinner"}:
+            raise ValueError("Meal slot must be lunch or dinner")
+        return slot
+
+
+def delivery_distance_meters(lat1: Optional[float], lng1: Optional[float],
+                             lat2: Optional[float], lng2: Optional[float]) -> Optional[float]:
+    if None in {lat1, lng1, lat2, lng2}:
+        return None
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lng = math.radians(lng2 - lng1)
+    value = math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lng / 2) ** 2
+    return round(6371000 * 2 * math.atan2(math.sqrt(value), math.sqrt(1 - value)), 1)
+
+
+def delivery_eta_minutes(distance: Optional[float]) -> Optional[int]:
+    return max(1, math.ceil(distance / 250 + 1)) if distance is not None else None
+
+
+def clean_delivery_notification(document: dict) -> dict:
+    return {key: value for key, value in document.items() if key not in {"_id", "expires_at"}}
+
+
+async def delivery_session_payload(business_id: str, meal_slot: str) -> dict:
+    today = get_today_date()
+    session = await db.delivery_sessions.find_one(
+        {"business_id": business_id, "date": today, "meal_slot": meal_slot}, {"_id": 0}
+    )
+    selections = await db.meal_selections.find(
+        {
+            "business_id": business_id,
+            "date": today,
+            "meal_slot": meal_slot,
+            "action": {"$ne": "CANCEL"},
+            "delivery_option": "DELIVERY",
+        },
+        {"_id": 0},
+    ).to_list(None)
+    worker_ids = list({row.get("worker_id") for row in selections if row.get("worker_id")})
+    workers = await db.workers.find(
+        {"business_id": business_id, "id": {"$in": worker_ids}},
+        {"_id": 0, "password_hash": 0},
+    ).to_list(None) if worker_ids else []
+    worker_by_id = {worker["id"]: worker for worker in workers}
+    driver_lat = (session or {}).get("current_lat")
+    driver_lng = (session or {}).get("current_lng")
+    stops = []
+    for selection in selections:
+        worker = worker_by_id.get(selection.get("worker_id"), {})
+        lat = selection.get("delivery_lat")
+        lng = selection.get("delivery_lng")
+        if lat is None:
+            lat = worker.get("delivery_lat")
+        if lng is None:
+            lng = worker.get("delivery_lng")
+        distance = delivery_distance_meters(driver_lat, driver_lng, lat, lng)
+        stops.append({
+            "selection_id": selection.get("id"),
+            "worker_id": selection.get("worker_id"),
+            "student_name": worker.get("name") or selection.get("student_name") or "Student",
+            "student_phone": worker.get("mobile") or "",
+            "option_name": selection.get("selected_item_name") or selection.get("selection_type") or "Meal",
+            "delivery_address": selection.get("delivery_address") or worker.get("delivery_address") or "",
+            "delivery_notes": selection.get("delivery_notes") or worker.get("delivery_notes") or "",
+            "delivery_lat": lat,
+            "delivery_lng": lng,
+            "delivery_status": selection.get("delivery_status") or "CONFIRMED",
+            "delivered_at": selection.get("delivered_at"),
+            "distance_meters": distance,
+            "eta_minutes": delivery_eta_minutes(distance),
+        })
+    stops.sort(key=lambda stop: (stop["delivery_status"] == "DELIVERED", stop["distance_meters"] is None,
+                                 stop["distance_meters"] or 0))
+    delivered = sum(stop["delivery_status"] == "DELIVERED" for stop in stops)
+    return {
+        "session_id": (session or {}).get("id"),
+        "date": today,
+        "meal_slot": meal_slot,
+        "is_active": bool((session or {}).get("is_active")),
+        "driver_name": (session or {}).get("driver_name", "Kitchen Delivery Team"),
+        "driver_phone": (session or {}).get("driver_phone", ""),
+        "current_lat": driver_lat,
+        "current_lng": driver_lng,
+        "started_at": (session or {}).get("started_at"),
+        "updated_at": (session or {}).get("updated_at"),
+        "total_stops": len(stops),
+        "pending_stops": len(stops) - delivered,
+        "delivered_stops": delivered,
+        "stops": stops,
+    }
+
+
+@api_router.get("/delivery/admin/session")
+async def get_delivery_session(meal_slot: str = "lunch", admin: dict = Depends(get_current_admin)):
+    slot = meal_slot.strip().lower()
+    if slot not in {"lunch", "dinner"}:
+        raise HTTPException(status_code=422, detail="Meal slot must be lunch or dinner")
+    return await delivery_session_payload(admin["business_id"], slot)
+
+
+@api_router.post("/delivery/admin/session/start")
+async def start_delivery_session(body: DeliverySessionStart, admin: dict = Depends(get_current_admin)):
+    biz_id, today = admin["business_id"], get_today_date()
+    now = datetime.now(timezone.utc)
+    existing = await db.delivery_sessions.find_one(
+        {"business_id": biz_id, "date": today, "meal_slot": body.meal_slot}, {"_id": 0}
+    )
+    session_id = (existing or {}).get("id") or str(uuid.uuid4())
+    await db.delivery_sessions.update_one(
+        {"business_id": biz_id, "date": today, "meal_slot": body.meal_slot},
+        {"$set": {
+            "id": session_id, "business_id": biz_id, "date": today, "meal_slot": body.meal_slot,
+            "is_active": True, "driver_name": body.driver_name.strip(),
+            "driver_phone": body.driver_phone.strip(), "current_lat": body.current_lat,
+            "current_lng": body.current_lng, "started_at": now.isoformat(), "updated_at": now.isoformat(),
+        }, "$unset": {"ended_at": ""}},
+        upsert=True,
+    )
+    selection_query = {
+        "business_id": biz_id, "date": today, "meal_slot": body.meal_slot,
+        "action": {"$ne": "CANCEL"}, "delivery_option": "DELIVERY",
+        "delivery_status": {"$ne": "DELIVERED"},
+    }
+    selections = await db.meal_selections.find(selection_query, {"_id": 0, "worker_id": 1, "id": 1}).to_list(None)
+    await db.meal_selections.update_many(selection_query, {"$set": {"delivery_status": "OUT_FOR_DELIVERY", "updated_at": now.isoformat()}})
+    if selections:
+        expires_at = now + NOTIFICATION_RETENTION
+        await db.delivery_notifications.insert_many([{
+            "id": str(uuid.uuid4()), "business_id": biz_id, "worker_id": item["worker_id"],
+            "title": "🛵 Meal out for delivery", "body": f"Your {body.meal_slot} meal is on the way.",
+            "type": "OUT_FOR_DELIVERY", "is_read": False, "created_at": now.isoformat(), "expires_at": expires_at,
+        } for item in selections])
+        for item in selections:
+            asyncio.create_task(deliver_student_push(
+                business_id=biz_id, worker_id=item["worker_id"], title="🛵 Meal out for delivery",
+                body=f"Your {body.meal_slot} meal is on the way.", url="/worker?tab=delivery",
+                tag=f"delivery-{today}-{body.meal_slot}",
+            ))
+    await db.activity_logs.insert_one({
+        "id": str(uuid.uuid4()), "business_id": biz_id, "type": "DELIVERY_STARTED",
+        "title": f"🛵 {body.meal_slot.title()} delivery started for {len(selections)} order(s)",
+        "created_at": now.isoformat(),
+    })
+    return await delivery_session_payload(biz_id, body.meal_slot)
+
+
+@api_router.post("/delivery/admin/session/stop")
+async def stop_delivery_session(meal_slot: str = "lunch", admin: dict = Depends(get_current_admin)):
+    slot = meal_slot.strip().lower()
+    if slot not in {"lunch", "dinner"}:
+        raise HTTPException(status_code=422, detail="Meal slot must be lunch or dinner")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.delivery_sessions.update_one(
+        {"business_id": admin["business_id"], "date": get_today_date(), "meal_slot": slot},
+        {"$set": {"is_active": False, "ended_at": now_iso, "updated_at": now_iso}},
+    )
+    return {"ok": True}
+
+
+@api_router.post("/delivery/admin/session/location")
+async def update_delivery_location(body: DeliveryLocationUpdate, meal_slot: str = "lunch",
+                                   admin: dict = Depends(get_current_admin)):
+    slot = meal_slot.strip().lower()
+    if slot not in {"lunch", "dinner"}:
+        raise HTTPException(status_code=422, detail="Meal slot must be lunch or dinner")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    result = await db.delivery_sessions.update_one(
+        {"business_id": admin["business_id"], "date": get_today_date(), "meal_slot": slot, "is_active": True},
+        {"$set": {"current_lat": body.latitude, "current_lng": body.longitude, "updated_at": now_iso}},
+    )
+    if not result.matched_count:
+        raise HTTPException(status_code=409, detail="Start the delivery run before broadcasting GPS")
+    return {"ok": True, "current_lat": body.latitude, "current_lng": body.longitude, "updated_at": now_iso}
+
+
+@api_router.post("/delivery/admin/orders/{selection_id}/deliver")
+async def mark_delivery_complete(selection_id: str, admin: dict = Depends(get_current_admin)):
+    now = datetime.now(timezone.utc)
+    selection = await db.meal_selections.find_one_and_update(
+        {"id": selection_id, "business_id": admin["business_id"], "delivery_option": "DELIVERY", "action": {"$ne": "CANCEL"}},
+        {"$set": {"delivery_status": "DELIVERED", "delivered_at": now.isoformat(), "updated_at": now.isoformat()}},
+        return_document=True,
+    )
+    if not selection:
+        raise HTTPException(status_code=404, detail="Delivery order not found")
+    notification = {
+        "id": str(uuid.uuid4()), "business_id": admin["business_id"], "worker_id": selection["worker_id"],
+        "title": "🎉 Meal delivered", "body": f"Your {selection['meal_slot']} meal has arrived. Enjoy!",
+        "type": "DELIVERED", "is_read": False, "created_at": now.isoformat(),
+        "expires_at": now + NOTIFICATION_RETENTION,
+    }
+    await db.delivery_notifications.insert_one(notification)
+    asyncio.create_task(deliver_student_push(
+        business_id=admin["business_id"], worker_id=selection["worker_id"], title=notification["title"],
+        body=notification["body"], url="/worker?tab=delivery", tag=f"delivered-{selection_id}",
+    ))
+    return {"ok": True, "delivered_at": notification["created_at"]}
+
+
+@api_router.post("/delivery/student/location")
+async def update_student_delivery_location(body: DeliveryLocationUpdate, worker: dict = Depends(get_current_worker)):
+    address = (body.address or worker.get("delivery_address") or "").strip()
+    if len(address) < 2:
+        raise HTTPException(status_code=422, detail="Enter a delivery address before saving location")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    fields = {"delivery_lat": body.latitude, "delivery_lng": body.longitude,
+              "delivery_address": address, "updated_at": now_iso}
+    await db.workers.update_one({"id": worker["worker_id"], "business_id": worker["business_id"]}, {"$set": fields})
+    await db.meal_selections.update_many(
+        {"worker_id": worker["worker_id"], "business_id": worker["business_id"], "date": get_today_date(),
+         "delivery_option": "DELIVERY", "action": {"$ne": "CANCEL"}},
+        {"$set": fields},
+    )
+    return {"ok": True, "latitude": body.latitude, "longitude": body.longitude, "address": address}
+
+
+@api_router.get("/delivery/track/student")
+async def track_student_delivery(meal_slot: str = "lunch", worker: dict = Depends(get_current_worker)):
+    slot = meal_slot.strip().lower()
+    if slot not in {"lunch", "dinner"}:
+        raise HTTPException(status_code=422, detail="Meal slot must be lunch or dinner")
+    biz_id, worker_id, today = worker["business_id"], worker["worker_id"], get_today_date()
+    selection = await db.meal_selections.find_one(
+        {"business_id": biz_id, "worker_id": worker_id, "date": today, "meal_slot": slot}, {"_id": 0}
+    )
+    session = await db.delivery_sessions.find_one(
+        {"business_id": biz_id, "date": today, "meal_slot": slot}, {"_id": 0}
+    )
+    notifications = await db.delivery_notifications.find(
+        {"business_id": biz_id, "worker_id": worker_id}, {"_id": 0, "expires_at": 0}
+    ).sort("created_at", -1).to_list(10)
+    is_delivery = bool(selection and selection.get("action") != "CANCEL" and selection.get("delivery_option") == "DELIVERY")
+    student_lat = (selection or {}).get("delivery_lat")
+    student_lng = (selection or {}).get("delivery_lng")
+    if student_lat is None:
+        student_lat = worker.get("delivery_lat")
+    if student_lng is None:
+        student_lng = worker.get("delivery_lng")
+    driver_lat = (session or {}).get("current_lat") if (session or {}).get("is_active") else None
+    driver_lng = (session or {}).get("current_lng") if (session or {}).get("is_active") else None
+    distance = delivery_distance_meters(driver_lat, driver_lng, student_lat, student_lng)
+    return {
+        "date": today, "meal_slot": slot, "has_delivery_order": is_delivery,
+        "delivery_status": (selection or {}).get("delivery_status", "NOT_SELECTED" if not selection else "CONFIRMED"),
+        "option_name": (selection or {}).get("selected_item_name") or (selection or {}).get("selection_type") or "Meal",
+        "delivery_address": (selection or {}).get("delivery_address") or worker.get("delivery_address") or "",
+        "student_lat": student_lat, "student_lng": student_lng,
+        "driver_lat": driver_lat, "driver_lng": driver_lng,
+        "driver_name": (session or {}).get("driver_name") if driver_lat is not None else None,
+        "driver_phone": (session or {}).get("driver_phone") if driver_lat is not None else None,
+        "is_out_for_delivery": bool((session or {}).get("is_active") and is_delivery),
+        "distance_meters": distance, "eta_minutes": delivery_eta_minutes(distance),
+        "delivered_at": (selection or {}).get("delivered_at"),
+        "updated_at": (session or {}).get("updated_at"),
+        "notifications": [clean_delivery_notification(item) for item in notifications],
+    }
+
+
 app.include_router(api_router)
 
 
@@ -5950,7 +6228,7 @@ async def production_security(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=(self)"
+    response.headers["Permissions-Policy"] = "camera=(), geolocation=(self), microphone=(self)"
     logger.info("request_id=%s method=%s path=%s status=%s duration_ms=%d", request_id, request.method,
                 request.url.path, response.status_code, (time.monotonic() - started) * 1000)
     return response

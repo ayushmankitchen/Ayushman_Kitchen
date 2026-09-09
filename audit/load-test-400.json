@@ -1,5 +1,5 @@
 {
-  "checked_at_utc": "2026-09-09T07:51:36.081808+00:00",
+  "checked_at_utc": "2026-09-09T20:47:52.535458+00:00",
   "registered_students": 600,
   "max_in_flight_requests": 400,
   "transport": "in-process ASGI + real localhost MongoDB",
@@ -10,12 +10,12 @@
       "statuses": {
         "200": 40
       },
-      "duration_s": 1.4,
-      "requests_per_second": 28.52,
-      "p50_ms": 1366.76,
-      "p95_ms": 1395.43,
-      "p99_ms": 1395.73,
-      "max_ms": 1399.19
+      "duration_s": 1.43,
+      "requests_per_second": 27.97,
+      "p50_ms": 1402.67,
+      "p95_ms": 1425.63,
+      "p99_ms": 1426.75,
+      "max_ms": 1426.97
     },
     {
       "name": "/api/worker/today-meal",
@@ -24,11 +24,11 @@
         "200": 400
       },
       "duration_s": 0.91,
-      "requests_per_second": 439.13,
-      "p50_ms": 854.39,
-      "p95_ms": 885.38,
-      "p99_ms": 900.56,
-      "max_ms": 908.89
+      "requests_per_second": 440.76,
+      "p50_ms": 857.37,
+      "p95_ms": 880.46,
+      "p99_ms": 894.01,
+      "max_ms": 896.84
     },
     {
       "name": "/api/worker/meal-stats",
@@ -36,12 +36,12 @@
       "statuses": {
         "200": 400
       },
-      "duration_s": 0.64,
-      "requests_per_second": 624.62,
-      "p50_ms": 600.9,
-      "p95_ms": 617.53,
-      "p99_ms": 622.18,
-      "max_ms": 625.95
+      "duration_s": 0.63,
+      "requests_per_second": 634.0,
+      "p50_ms": 588.92,
+      "p95_ms": 604.93,
+      "p99_ms": 608.17,
+      "max_ms": 611.07
     },
     {
       "name": "/api/worker/me/data",
@@ -50,11 +50,11 @@
         "200": 400
       },
       "duration_s": 0.65,
-      "requests_per_second": 616.5,
-      "p50_ms": 569.79,
-      "p95_ms": 596.05,
-      "p99_ms": 601.42,
-      "max_ms": 605.04
+      "requests_per_second": 616.6,
+      "p50_ms": 566.36,
+      "p95_ms": 592.32,
+      "p99_ms": 600.45,
+      "max_ms": 610.5
     },
     {
       "name": "/api/chat/worker-conversation",
@@ -62,12 +62,12 @@
       "statuses": {
         "200": 400
       },
-      "duration_s": 0.65,
-      "requests_per_second": 612.02,
-      "p50_ms": 582.14,
-      "p95_ms": 602.29,
-      "p99_ms": 607.14,
-      "max_ms": 619.17
+      "duration_s": 0.62,
+      "requests_per_second": 641.27,
+      "p50_ms": 552.49,
+      "p95_ms": 572.73,
+      "p99_ms": 578.87,
+      "max_ms": 590.58
     },
     {
       "name": "meal selection burst",
@@ -75,12 +75,25 @@
       "statuses": {
         "200": 400
       },
-      "duration_s": 0.92,
-      "requests_per_second": 436.17,
-      "p50_ms": 838.97,
-      "p95_ms": 863.74,
-      "p99_ms": 870.13,
-      "max_ms": 872.9
+      "duration_s": 0.88,
+      "requests_per_second": 454.65,
+      "p50_ms": 804.42,
+      "p95_ms": 824.69,
+      "p99_ms": 831.07,
+      "max_ms": 836.54
+    },
+    {
+      "name": "live delivery tracking burst",
+      "requests": 400,
+      "statuses": {
+        "200": 400
+      },
+      "duration_s": 0.52,
+      "requests_per_second": 763.51,
+      "p50_ms": 460.66,
+      "p95_ms": 499.67,
+      "p99_ms": 504.04,
+      "max_ms": 507.18
     },
     {
       "name": "/api/meal-headcount",
@@ -88,12 +101,12 @@
       "statuses": {
         "200": 10
       },
-      "duration_s": 0.2,
-      "requests_per_second": 49.79,
-      "p50_ms": 182.65,
-      "p95_ms": 199.49,
-      "p99_ms": 199.49,
-      "max_ms": 199.5
+      "duration_s": 0.21,
+      "requests_per_second": 48.05,
+      "p50_ms": 169.89,
+      "p95_ms": 206.72,
+      "p99_ms": 206.72,
+      "max_ms": 207.28
     },
     {
       "name": "/api/admin/low-balance-students",
@@ -101,12 +114,12 @@
       "statuses": {
         "200": 10
       },
-      "duration_s": 0.41,
-      "requests_per_second": 24.47,
-      "p50_ms": 407.42,
-      "p95_ms": 408.22,
-      "p99_ms": 408.22,
-      "max_ms": 408.26
+      "duration_s": 0.38,
+      "requests_per_second": 26.48,
+      "p50_ms": 376.38,
+      "p95_ms": 377.06,
+      "p99_ms": 377.06,
+      "max_ms": 377.48
     },
     {
       "name": "/api/chat/conversations",
@@ -114,12 +127,12 @@
       "statuses": {
         "200": 10
       },
-      "duration_s": 0.16,
-      "requests_per_second": 63.21,
-      "p50_ms": 125.17,
-      "p95_ms": 157.29,
-      "p99_ms": 157.29,
-      "max_ms": 158.13
+      "duration_s": 0.15,
+      "requests_per_second": 64.75,
+      "p50_ms": 141.98,
+      "p95_ms": 153.88,
+      "p99_ms": 153.88,
+      "max_ms": 154.18
     },
     {
       "name": "same-student duplicate submission",
@@ -128,11 +141,11 @@
         "200": 25
       },
       "duration_s": 0.06,
-      "requests_per_second": 401.04,
-      "p50_ms": 57.38,
-      "p95_ms": 59.78,
-      "p99_ms": 59.86,
-      "max_ms": 61.33
+      "requests_per_second": 414.05,
+      "p50_ms": 55.52,
+      "p95_ms": 58.51,
+      "p99_ms": 59.01,
+      "max_ms": 59.14
     }
   ],
   "health_during_logins": {
@@ -140,15 +153,15 @@
     "statuses": {
       "200": 13
     },
-    "p50_ms": 2.62,
-    "p95_ms": 7.33,
-    "p99_ms": 7.33,
-    "max_ms": 24.25
+    "p50_ms": 3.43,
+    "p95_ms": 25.3,
+    "p99_ms": 25.3,
+    "max_ms": 95.26
   },
   "headcount_students": 600,
   "persisted_lunch_selections": 400,
   "same_student_dinner_records": 1,
   "final_readiness": 200,
-  "process_peak_rss_bytes": 263536640,
+  "process_peak_rss_bytes": 265830400,
   "passed": true
 }

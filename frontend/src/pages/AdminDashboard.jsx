@@ -25,6 +25,7 @@ import VoiceRecorder from "@/components/chat/VoiceRecorder";
 import AudioPlayer from "@/components/chat/AudioPlayer";
 import SpeechTyping from "@/components/chat/SpeechTyping";
 import useSmartChatScroll from "@/components/chat/useSmartChatScroll";
+import AdminDeliveryDispatcher from "@/components/delivery/AdminDeliveryDispatcher";
 import { clearConversationNotifications, enablePushNotifications, onPushNotification, pushSupported, sendTestNotification, updateAppBadge } from "@/lib/notifications";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
@@ -50,6 +51,7 @@ const NAV = [
   { key: "overview", label: "Overview", icon: LayoutDashboard },
   { key: "workers", label: "Students", icon: GraduationCap },
   { key: "menu", label: "Meal Menu & Kitchen", icon: ChefHat },
+  { key: "delivery", label: "Live Delivery", icon: Bike },
   { key: "messages", label: "Messages", icon: MessageSquare },
   { key: "settings", label: "Settings", icon: Settings },
 ];
@@ -60,7 +62,7 @@ const attStyle = {
   "Half Day": "bg-amber-50 text-amber-800 border-amber-300 font-bold",
 };
 
-const VALID_VIEWS = ["overview", "workers", "menu", "messages", "settings"];
+const VALID_VIEWS = ["overview", "workers", "menu", "delivery", "messages", "settings"];
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -306,6 +308,7 @@ export default function AdminDashboard() {
             />
           )}
           {view === "menu" && <MealMenuSection workers={workers} />}
+          {view === "delivery" && <AdminDeliveryDispatcher />}
           {view === "messages" && <MessagesSection workers={workers} admin={admin} onUnreadChange={loadUnreadMessages} />}
           {view === "settings" && <SettingsSection admin={admin} setAdmin={setAdmin} />}
         </main>
@@ -5784,4 +5787,3 @@ function SettingsSection({ admin, setAdmin }) {
     </div>
   );
 }
-

@@ -118,6 +118,19 @@ async def run(concurrency):
             for path in ["/api/worker/today-meal", "/api/worker/meal-stats", "/api/worker/me/data", "/api/chat/worker-conversation"]:
                 await phase(path, "GET", path)
             await phase("meal selection burst", "POST", "/api/worker/select-meal", body={"date": today, "meal_slot": "lunch", "action": "CONFIRM", "selection_type": "VEG"})
+            await db.meal_selections.update_many(
+                {"business_id": biz, "date": today, "meal_slot": "lunch"},
+                {"$set": {"delivery_option": "DELIVERY", "delivery_status": "OUT_FOR_DELIVERY",
+                           "delivery_address": "Capacity Test Hostel", "delivery_lat": 28.62,
+                           "delivery_lng": 77.21}},
+            )
+            await db.delivery_sessions.insert_one({
+                "id": "capacity-delivery-session", "business_id": biz, "date": today,
+                "meal_slot": "lunch", "is_active": True, "driver_name": "Capacity Rider",
+                "current_lat": 28.61, "current_lng": 77.20, "started_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            })
+            await phase("live delivery tracking burst", "GET", "/api/delivery/track/student")
             for path in ["/api/meal-headcount", "/api/admin/low-balance-students", "/api/chat/conversations"]:
                 await phase(path, "GET", path, count=10, admin_request=True)
             headcount = await client.get("/api/meal-headcount", headers=admin_headers)

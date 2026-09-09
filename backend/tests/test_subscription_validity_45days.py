@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytest
 
@@ -7,8 +7,8 @@ from backend import server
 
 @pytest.mark.asyncio
 async def test_subscription_active_within_45_days(monkeypatch):
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    joining_date = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%Y-%m-%d")
+    business_today = datetime.strptime(server.get_today_date(), "%Y-%m-%d")
+    joining_date = (business_today - timedelta(days=20)).strftime("%Y-%m-%d")
 
     worker = {
         "id": "w_active",
@@ -44,9 +44,9 @@ async def test_subscription_active_within_45_days(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_subscription_expires_after_45_days(monkeypatch):
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     # Started 50 days ago (> 45 days)
-    joining_date = (datetime.now(timezone.utc) - timedelta(days=50)).strftime("%Y-%m-%d")
+    business_today = datetime.strptime(server.get_today_date(), "%Y-%m-%d")
+    joining_date = (business_today - timedelta(days=50)).strftime("%Y-%m-%d")
 
     worker = {
         "id": "w_expired",

@@ -18,6 +18,7 @@ import VoiceRecorder from "@/components/chat/VoiceRecorder";
 import AudioPlayer from "@/components/chat/AudioPlayer";
 import SpeechTyping from "@/components/chat/SpeechTyping";
 import useSmartChatScroll from "@/components/chat/useSmartChatScroll";
+import StudentDeliveryTracker from "@/components/delivery/StudentDeliveryTracker";
 import { clearConversationNotifications, enablePushNotifications, onPushNotification, pushSupported, sendTestNotification, updateAppBadge } from "@/lib/notifications";
 import {
   Loader2,
@@ -936,6 +937,7 @@ export default function WorkerDashboard() {
           {[
             { key: "home", label: "Home", icon: Home },
             { key: "attendance", label: "Meal Calendar", icon: CalendarCheck },
+            { key: "delivery", label: "Live Delivery", icon: Bike },
             { key: "messages", label: "Messages", icon: MessageSquare },
           ].map((t) => (
             <button
@@ -1506,6 +1508,8 @@ export default function WorkerDashboard() {
             {/* ──────────────────────────────────────────────────────────
                 2. ATTENDANCE & MEAL CONSUMPTION CALENDAR TAB
             ────────────────────────────────────────────────────────── */}
+            {tab === "delivery" && <StudentDeliveryTracker worker={data?.worker} />}
+
             {tab === "attendance" && (
               <div className="space-y-6">
                 {/* Month Navigator Header */}

@@ -23,6 +23,13 @@ INDEXES = {
     "messages": [([("business_id", 1), ("sender_type", 1), ("read_at", 1), ("conversation_id", 1)], {})],
     "attendance": [([("date", 1)], {})],
     "worker_sessions": [([("expires_at", 1)], {"expireAfterSeconds": 0})],
+    "delivery_sessions": [
+        ([("business_id", 1), ("date", 1), ("meal_slot", 1)], {"unique": True}),
+    ],
+    "delivery_notifications": [
+        ([("business_id", 1), ("worker_id", 1), ("created_at", -1)], {}),
+        ([("expires_at", 1)], {"expireAfterSeconds": 0}),
+    ],
 }
 
 
