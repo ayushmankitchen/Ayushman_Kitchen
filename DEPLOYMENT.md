@@ -4,8 +4,22 @@ This runbook applies to the **MongoDB / React CRA application in this workspace*
 GitHub `main` at `9c1a180` is an unrelated PostgreSQL / Vite rewrite. Do not point
 these commands at that branch, combine the databases, or replace either database
 with an empty one. The tested changes are published on the separate branch
-`audit/production-hardening-2026-09-09` at commit `4ce7bd6`; its GitHub Actions
-production checks completed successfully.
+`audit/production-hardening-2026-09-09`; its GitHub Actions production checks
+completed successfully.
+
+## Live rollout record
+
+On 9 September 2026, Render service `srv-da2cr46417fc73e97tfg` was pinned to the
+audited branch, configured with the locked requirements and `/api/ready` health
+check, and deploy `dep-dagmkcmk1f9s73div2mg` successfully released commit
+`60e567c`. Vercel deployment `dpl_FtKvinc7PnrkPFn8f71KEqFEDExz` promoted the
+verified preview to `https://ayushman-kitchen.vercel.app`. The post-promotion smoke
+evidence is in `audit/production-evidence.json`.
+
+The Render service remains on the Free plan. Upgrade it before relying on predictable
+meal-cutoff availability, then add external monitoring. The live MongoDB student
+count and backup/restore status still require verification with the production
+database owner; this rollout did not replace or seed that database.
 
 ## Recommended hosting
 

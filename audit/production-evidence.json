@@ -1,38 +1,38 @@
 {
-  "checked_at_utc": "2026-09-09T02:44:41.579336+00:00",
+  "checked_at_utc": "2026-09-09T14:31:11.713722+00:00",
   "http": [
     {
       "url": "https://ayushman-kitchen.vercel.app/",
       "status": 200,
-      "elapsed_ms": 421,
+      "elapsed_ms": 528,
       "headers": {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "public, max-age=0, must-revalidate",
         "x-request-id": null,
-        "x-frame-options": null,
-        "x-content-type-options": null
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff"
       }
     },
     {
       "url": "https://ayushman-kitchen.vercel.app/student/login",
       "status": 200,
-      "elapsed_ms": 382,
+      "elapsed_ms": 108,
       "headers": {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "public, max-age=0, must-revalidate",
         "x-request-id": null,
-        "x-frame-options": null,
-        "x-content-type-options": null
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff"
       }
     },
     {
       "url": "https://ayushman-kitchen.vercel.app/api/health",
       "status": 200,
-      "elapsed_ms": 331,
+      "elapsed_ms": 209,
       "headers": {
         "content-type": "application/json",
-        "cache-control": "public, max-age=0, must-revalidate",
-        "x-request-id": "99b64c56-50eb-46fc-a425-07c9a4b34dd0",
+        "cache-control": "no-store, private",
+        "x-request-id": "72c3f0a4-10e1-4fdc-a730-cbdf044b6555",
         "x-frame-options": "DENY",
         "x-content-type-options": "nosniff"
       },
@@ -40,6 +40,7 @@
         "status": "ok",
         "service": "Ayushman Kitchen API",
         "version": "1.0.0",
+        "revision": "60e567c8e3c3",
         "environment": "production",
         "timezone": "Asia/Kolkata"
       }
@@ -47,11 +48,11 @@
     {
       "url": "https://ayushman-kitchen.vercel.app/api/ready",
       "status": 200,
-      "elapsed_ms": 269,
+      "elapsed_ms": 410,
       "headers": {
         "content-type": "application/json",
-        "cache-control": "public, max-age=0, must-revalidate",
-        "x-request-id": "08cf7900-067e-4854-8b05-d994e01af12f",
+        "cache-control": "no-store, private",
+        "x-request-id": "34034183-7bf1-4ca1-b932-22b0784499cd",
         "x-frame-options": "DENY",
         "x-content-type-options": "nosniff"
       },
@@ -62,11 +63,11 @@
     {
       "url": "https://ayushman-kitchen.vercel.app/api/public/business",
       "status": 200,
-      "elapsed_ms": 282,
+      "elapsed_ms": 262,
       "headers": {
         "content-type": "application/json",
-        "cache-control": "public, max-age=0, must-revalidate",
-        "x-request-id": "a937b161-b7ae-4a4b-add3-fb33db60fa07",
+        "cache-control": "no-store, private",
+        "x-request-id": "8c090eb7-542d-4798-ac4a-16bcefd504fc",
         "x-frame-options": "DENY",
         "x-content-type-options": "nosniff"
       }
@@ -74,11 +75,11 @@
     {
       "url": "https://ayushman-kitchen.vercel.app/api/workers",
       "status": 401,
-      "elapsed_ms": 530,
+      "elapsed_ms": 321,
       "headers": {
         "content-type": "application/json",
-        "cache-control": "public, max-age=0, must-revalidate",
-        "x-request-id": "f1a15177-a460-4d0e-9a17-dae753311838",
+        "cache-control": "no-store, private",
+        "x-request-id": "4b9ab4a0-7598-46a7-aa15-3be31a7c1ca8",
         "x-frame-options": "DENY",
         "x-content-type-options": "nosniff"
       }
@@ -86,11 +87,11 @@
     {
       "url": "https://ayushman-kitchen.onrender.com/api/health",
       "status": 200,
-      "elapsed_ms": 371,
+      "elapsed_ms": 653,
       "headers": {
         "content-type": "application/json",
-        "cache-control": null,
-        "x-request-id": "df994bd7-8d35-4bf7-b44c-dc9332fb8956",
+        "cache-control": "no-store, private",
+        "x-request-id": "dc02eff1-0108-49f4-bef8-559f7acbeae8",
         "x-frame-options": "DENY",
         "x-content-type-options": "nosniff"
       },
@@ -98,6 +99,7 @@
         "status": "ok",
         "service": "Ayushman Kitchen API",
         "version": "1.0.0",
+        "revision": "60e567c8e3c3",
         "environment": "production",
         "timezone": "Asia/Kolkata"
       }
@@ -105,11 +107,11 @@
     {
       "url": "https://ayushman-kitchen.onrender.com/api/ready",
       "status": 200,
-      "elapsed_ms": 204,
+      "elapsed_ms": 237,
       "headers": {
         "content-type": "application/json",
-        "cache-control": null,
-        "x-request-id": "e03aeafe-daf6-47cf-9e8a-c99b8a55886b",
+        "cache-control": "no-store, private",
+        "x-request-id": "af398d29-492f-4b96-9358-544943243109",
         "x-frame-options": "DENY",
         "x-content-type-options": "nosniff"
       },
@@ -149,6 +151,14 @@
           },
           "unique": true,
           "ttl": null
+        },
+        {
+          "name": "id_1",
+          "keys": {
+            "id": 1
+          },
+          "unique": true,
+          "ttl": null
         }
       ],
       "businesses": [
@@ -166,6 +176,14 @@
             "owner_admin_id": 1
           },
           "unique": false,
+          "ttl": null
+        },
+        {
+          "name": "id_1",
+          "keys": {
+            "id": 1
+          },
+          "unique": true,
           "ttl": null
         }
       ],
@@ -204,6 +222,23 @@
           },
           "unique": true,
           "ttl": null
+        },
+        {
+          "name": "id_1",
+          "keys": {
+            "id": 1
+          },
+          "unique": true,
+          "ttl": null
+        },
+        {
+          "name": "business_id_1_status_1",
+          "keys": {
+            "business_id": 1,
+            "status": 1
+          },
+          "unique": false,
+          "ttl": null
         }
       ],
       "meal_settings": [
@@ -214,6 +249,14 @@
           },
           "unique": false,
           "ttl": null
+        },
+        {
+          "name": "business_id_1",
+          "keys": {
+            "business_id": 1
+          },
+          "unique": true,
+          "ttl": null
         }
       ],
       "meal_selections": [
@@ -221,6 +264,34 @@
           "name": "_id_",
           "keys": {
             "_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        },
+        {
+          "name": "business_id_1_worker_id_1_date_1_meal_slot_1",
+          "keys": {
+            "business_id": 1,
+            "worker_id": 1,
+            "date": 1,
+            "meal_slot": 1
+          },
+          "unique": true,
+          "ttl": null
+        },
+        {
+          "name": "business_id_1_date_1",
+          "keys": {
+            "business_id": 1,
+            "date": 1
+          },
+          "unique": false,
+          "ttl": null
+        },
+        {
+          "name": "date_1",
+          "keys": {
+            "date": 1
           },
           "unique": false,
           "ttl": null
@@ -234,6 +305,27 @@
           },
           "unique": false,
           "ttl": null
+        },
+        {
+          "name": "business_id_1_worker_id_1_status_1",
+          "keys": {
+            "business_id": 1,
+            "worker_id": 1,
+            "status": 1
+          },
+          "unique": false,
+          "ttl": null
+        },
+        {
+          "name": "business_id_1_status_1_start_date_1_end_date_1",
+          "keys": {
+            "business_id": 1,
+            "status": 1,
+            "start_date": 1,
+            "end_date": 1
+          },
+          "unique": false,
+          "ttl": null
         }
       ],
       "activity_logs": [
@@ -241,6 +333,15 @@
           "name": "_id_",
           "keys": {
             "_id": 1
+          },
+          "unique": false,
+          "ttl": null
+        },
+        {
+          "name": "business_id_1_created_at_-1",
+          "keys": {
+            "business_id": 1,
+            "created_at": -1
           },
           "unique": false,
           "ttl": null
@@ -260,6 +361,14 @@
           "keys": {
             "business_id": 1,
             "worker_id": 1
+          },
+          "unique": true,
+          "ttl": null
+        },
+        {
+          "name": "id_1",
+          "keys": {
+            "id": 1
           },
           "unique": true,
           "ttl": null
@@ -299,6 +408,17 @@
           },
           "unique": false,
           "ttl": null
+        },
+        {
+          "name": "business_id_1_sender_type_1_read_at_1_conversation_id_1",
+          "keys": {
+            "business_id": 1,
+            "sender_type": 1,
+            "read_at": 1,
+            "conversation_id": 1
+          },
+          "unique": false,
+          "ttl": null
         }
       ],
       "attendance": [
@@ -318,6 +438,14 @@
             "date": 1
           },
           "unique": true,
+          "ttl": null
+        },
+        {
+          "name": "date_1",
+          "keys": {
+            "date": 1
+          },
+          "unique": false,
           "ttl": null
         }
       ],
@@ -345,6 +473,14 @@
           },
           "unique": false,
           "ttl": null
+        },
+        {
+          "name": "expires_at_1",
+          "keys": {
+            "expires_at": 1
+          },
+          "unique": false,
+          "ttl": 0
         }
       ]
     },

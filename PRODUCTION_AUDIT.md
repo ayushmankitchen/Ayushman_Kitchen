@@ -4,17 +4,19 @@
 present in the supplied workspace, its available production URLs, dependency tree,
 test suite, maintenance scripts and deployment configuration.
 
-**Verdict: major verified defects have been fixed and the local checks pass. The
-release is ready for staging review; production readiness is not yet established.**
-Two release blockers remain: the actual 400+ student database is unconfirmed, and
-GitHub `main` contains an unrelated PostgreSQL/Vite rewrite. The audited changes
-are preserved on a separate branch. No existing production records were modified.
+**Verdict: the hardened MongoDB application is deployed and its production smoke
+checks pass. It is not yet sized or monitored for a 400+ student production SLA.**
+The actual live student count and historical crash rate remain unconfirmed, and the
+current Render Free plan can cold-start after inactivity. GitHub `main` contains an
+unrelated PostgreSQL/Vite rewrite, so production is deliberately pinned to the
+separate audited branch. No student records were replaced or seeded.
 
 **Hindi summary:** Code mein serious issues fix kiye hain. 600 dummy students aur
-400 concurrent API requests ka local test pass hua. Live website check ke waqt
-chal rahi thi. Lekin actual 400+ students wala database, production server ke past
-crash logs, aur kaunsi application deploy karni hai—ye confirm karna baaki hai.
-Isliye “kabhi crash nahi hoga” ya “production fully verified” kehna sahi nahi hoga.
+400 concurrent API requests ka local test pass hua aur hardened version ab live hai.
+Production health/readiness, frontend, API proxy aur access control pass hain. Lekin
+actual live 400+ student count aur purane crash metrics abhi verify nahi hue, aur
+Render Free predictable peak-time uptime ke liye suitable nahi hai. Isliye “kabhi
+crash nahi hoga” ki guarantee dena sahi nahi hoga.
 
 ## 1. Production evidence
 
@@ -23,14 +25,14 @@ requests. This was a smoke check, not a production stress test.
 
 | Check | Observed result | Time |
 | --- | --- | --- |
-| Vercel homepage | 200 | 421 ms |
-| Vercel student login page | 200 | 382 ms |
-| Vercel `/api/health` | 200, production service | 331 ms |
-| Vercel `/api/ready` | 200, database ready | 269 ms |
-| Vercel public branding API | 200 | 282 ms |
-| Vercel unauthenticated `/api/workers` | 401, expected denial | 530 ms |
-| Direct Render `/api/health` | 200 | 371 ms |
-| Direct Render `/api/ready` | 200 | 204 ms |
+| Vercel homepage | 200, security headers present | 528 ms |
+| Vercel student login page | 200, security headers present | 108 ms |
+| Vercel `/api/health` | 200, revision `60e567c8e3c3` | 209 ms |
+| Vercel `/api/ready` | 200, database ready | 410 ms |
+| Vercel public branding API | 200 | 262 ms |
+| Vercel unauthenticated `/api/workers` | 401, expected denial | 321 ms |
+| Direct Render `/api/health` | 200, revision `60e567c8e3c3` | 653 ms |
+| Direct Render `/api/ready` | 200 | 237 ms |
 
 These measurements were taken at the UTC timestamp in
 [production-evidence.json](audit/production-evidence.json). They demonstrate
@@ -39,11 +41,11 @@ rendered successfully or that a real student could sign in.
 
 The database pointed to by **this checkout's `backend/.env`** was separately read:
 18 total workers, 18 active workers, 19 businesses, no workers missing a business
-ID. No duplicate groups were found for the proposed unique index keys in that
-database. Meal settings, selections, leaves and activity logs had only MongoDB's
-default `_id` index. **This is not confirmed to be Render's database**, and the
-count does not match the reported 400+ students. Do not migrate, replace or seed
-the live database based on that result.
+ID. No duplicate groups were found for the proposed unique index keys, and the
+required application indexes are now present in that database. **This is not
+confirmed to be Render's database**, and the count does not match the reported
+400+ students. Do not migrate, replace or seed the live database based on that
+result.
 
 A later follow-up at 13:45 UTC observed a **30-second ReadTimeout on the proxied
 public branding API**, while homepage, login, health, readiness and authentication
@@ -53,9 +55,11 @@ not proof of a whole-process crash. Three immediate repeat checks succeeded
 not the timeout’s cause. See [follow-up evidence](audit/production-followup.json)
 and [repeat checks](audit/branding-recheck.json).
 
-No signed-in hosting dashboard or browser was available. Render plan, CPU/RAM
-history, restart/crash logs, deployment source commit, Atlas tier, backup policy,
-restore success, actual live student count and 24-hour availability remain unknown.
+The signed-in Render service showed a single Singapore web service on the Free plan,
+one instance, one worker and no configured datastore resource. Its external MongoDB
+configuration values were not exposed. Historical CPU/RAM, restart/crash history,
+Atlas tier, backup policy, restore success, actual live student count and 24-hour
+availability remain unverified.
 
 ## 2. Source version mismatch
 
@@ -168,17 +172,17 @@ on each endpoint; this is a timer calculation, not a production traffic measurem
 
 ## 6. Remaining limitations and operational work
 
-1. **Identify the real live database and application branch.** Do not initialize
-   an empty replacement database or force-push the unrelated GitHub application.
+1. **Confirm the real live database and student count.** The application branch is
+   now pinned, but do not initialize an empty database or force-push GitHub `main`.
 2. **Verify backups and restore.** No backup was created, scheduled or restored
    on the real live database during this audit. Historical records already deleted
    by the old cleanup cannot be reconstructed by these code changes.
 3. **Enable actual monitoring and review crash history.** Request logs, response
-   IDs and health endpoints exist, but no signed-in dashboard, external monitor,
-   alert channel or error-tracking service was configured here.
-4. **Stage before rollout.** Review required unique indexes and environment changes;
-   strong-secret checks can intentionally stop startup if configuration is weak.
-   Index preflight on the 18-record database is not approval for the 400+ database.
+   IDs and health endpoints exist, but no external monitor, alert channel or
+   error-tracking service is configured.
+4. **Add a production-like staging environment for subsequent releases.** The live
+   startup verified required indexes without deleting records, but the 18-record
+   checkout database still does not establish the live database's student count.
 5. **Single process assumption.** Rate limits and scheduled jobs remain process-local.
    Add shared rate limiting and scheduler coordination before multiple workers or
    replicas. Current student login coarse limit is 300/IP/minute plus 15 per
@@ -216,7 +220,10 @@ targets and rollback steps are in [DEPLOYMENT.md](DEPLOYMENT.md).
 ## 8. Commit and push status
 
 Implementation and tests are published on
-`audit/production-hardening-2026-09-09` at commit `4ce7bd6`. GitHub Actions run
-`34360657633` completed successfully. GitHub `main` remains unchanged because it is
-the unrelated PostgreSQL/Vite application described above. No production deployment
-was performed as part of this audit. Do not force-push main.
+`audit/production-hardening-2026-09-09`; GitHub Actions run `34360657633` completed
+successfully. Render deploy `dep-dagmkcmk1f9s73div2mg` deployed commit `60e567c`
+successfully after production index verification. The service branch is pinned to
+the audit branch, uses the locked Python dependencies and checks `/api/ready` before
+serving the new release. Vercel production deployment `dpl_FtKvinc7PnrkPFn8f71KEqFEDExz`
+is Ready and owns `https://ayushman-kitchen.vercel.app`. GitHub `main` remains
+unchanged because it is the unrelated application described above.
