@@ -1,0 +1,113 @@
+{
+  "checked_at_utc": "2026-09-09T13:45:30.807016+00:00",
+  "http": [
+    {
+      "url": "https://ayushman-kitchen.vercel.app/",
+      "status": 200,
+      "elapsed_ms": 395,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "x-request-id": null,
+        "x-frame-options": null,
+        "x-content-type-options": null
+      }
+    },
+    {
+      "url": "https://ayushman-kitchen.vercel.app/student/login",
+      "status": 200,
+      "elapsed_ms": 353,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "x-request-id": null,
+        "x-frame-options": null,
+        "x-content-type-options": null
+      }
+    },
+    {
+      "url": "https://ayushman-kitchen.vercel.app/api/health",
+      "status": 200,
+      "elapsed_ms": 335,
+      "headers": {
+        "content-type": "application/json",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "x-request-id": "5dca452c-ba2b-480a-acba-a92706248971",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff"
+      },
+      "body": {
+        "status": "ok",
+        "service": "Ayushman Kitchen API",
+        "version": "1.0.0",
+        "environment": "production",
+        "timezone": "Asia/Kolkata"
+      }
+    },
+    {
+      "url": "https://ayushman-kitchen.vercel.app/api/ready",
+      "status": 200,
+      "elapsed_ms": 411,
+      "headers": {
+        "content-type": "application/json",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "x-request-id": "4368fcff-74ae-4110-ae3b-f7add1116ce3",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff"
+      },
+      "body": {
+        "status": "ready"
+      }
+    },
+    {
+      "url": "https://ayushman-kitchen.vercel.app/api/public/business",
+      "error_type": "ReadTimeout"
+    },
+    {
+      "url": "https://ayushman-kitchen.vercel.app/api/workers",
+      "status": 401,
+      "elapsed_ms": 808,
+      "headers": {
+        "content-type": "application/json",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "x-request-id": "73429bcd-bc42-4ddb-9bc2-1ecfc14d0665",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff"
+      }
+    },
+    {
+      "url": "https://ayushman-kitchen.onrender.com/api/health",
+      "status": 200,
+      "elapsed_ms": 1339,
+      "headers": {
+        "content-type": "application/json",
+        "cache-control": null,
+        "x-request-id": "53ed4938-5f8b-42a9-ac4d-5b82b4d25797",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff"
+      },
+      "body": {
+        "status": "ok",
+        "service": "Ayushman Kitchen API",
+        "version": "1.0.0",
+        "environment": "production",
+        "timezone": "Asia/Kolkata"
+      }
+    },
+    {
+      "url": "https://ayushman-kitchen.onrender.com/api/ready",
+      "status": 200,
+      "elapsed_ms": 625,
+      "headers": {
+        "content-type": "application/json",
+        "cache-control": null,
+        "x-request-id": "206cfd86-f584-44c2-a8d8-7bde90c3940f",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff"
+      },
+      "body": {
+        "status": "ready"
+      }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+[
+  {
+    "url": "https://ayushman-kitchen.vercel.app/api/public/business",
+    "checked_at_utc": "2026-09-09T13:46:36.628193+00:00",
+    "status": 200,
+    "elapsed_ms": 495
+  },
+  {
+    "url": "https://ayushman-kitchen.onrender.com/api/public/business",
+    "checked_at_utc": "2026-09-09T13:46:37.122831+00:00",
+    "status": 200,
+    "elapsed_ms": 976
+  },
+  {
+    "url": "https://ayushman-kitchen.vercel.app/api/public/business",
+    "checked_at_utc": "2026-09-09T13:46:38.098958+00:00",
+    "status": 200,
+    "elapsed_ms": 384
+  }
+]

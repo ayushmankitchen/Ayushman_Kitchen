@@ -45,6 +45,14 @@ default `_id` index. **This is not confirmed to be Render's database**, and the
 count does not match the reported 400+ students. Do not migrate, replace or seed
 the live database based on that result.
 
+A later follow-up at 13:45 UTC observed a **30-second ReadTimeout on the proxied
+public branding API**, while homepage, login, health, readiness and authentication
+denial checks still responded. This is an observed intermittent request failure,
+not proof of a whole-process crash. Three immediate repeat checks succeeded
+(200; 384–976 ms) through Vercel and direct Render. This establishes recovery,
+not the timeout’s cause. See [follow-up evidence](audit/production-followup.json)
+and [repeat checks](audit/branding-recheck.json).
+
 No signed-in hosting dashboard or browser was available. Render plan, CPU/RAM
 history, restart/crash logs, deployment source commit, Atlas tier, backup policy,
 restore success, actual live student count and 24-hour availability remain unknown.
@@ -204,3 +212,12 @@ to PostgreSQL, or connecting the rewrite to Atlas, will not work without code ch
 
 Exact configuration, current official pricing links, deployment commands, monitoring
 targets and rollback steps are in [DEPLOYMENT.md](DEPLOYMENT.md).
+
+## 8. Commit and push status
+
+Implementation and tests were committed locally as `a7b0e0f` on
+`audit/production-hardening-2026-09-09`. GitHub rejected the push with **HTTP 403**:
+the authenticated account `Nishant20361` does not have write access to
+`ayushmankitchen/Ayushman_Kitchen`. No branch was published, no CI run was triggered,
+and no production deployment was performed. Grant repository write access or
+sign Git in with an authorized account, then retry the push. Do not force-push main.
