@@ -495,8 +495,11 @@ export default function WorkerDashboard() {
   const [addressDialogOpen, setAddressDialogOpen] = useState(false);
   const [addressDialogSlot, setAddressDialogSlot] = useState("lunch"); // "lunch" or "dinner"
   const [addressDialogValue, setAddressDialogValue] = useState("");
-  const [addressDialogNotes, setAddressDialogNotes] = useState("");
   const [addressDialogSaving, setAddressDialogSaving] = useState(false);
+  const [addressDialogLocation, setAddressDialogLocation] = useState(null);
+  const [addressDialogLocating, setAddressDialogLocating] = useState(false);
+  const [addressDialogLocationError, setAddressDialogLocationError] = useState("");
+  const addressLocationRequestRef = useRef(0);
 
   // Meal Quotas / Stats State
   const [mealStats, setMealStats] = useState(null);
@@ -597,6 +600,48 @@ export default function WorkerDashboard() {
     }
   }, [tab, calMonth, loadMealCalendar]);
 
+  const detectDeliveryLocation = useCallback(() => {
+    const requestId = ++addressLocationRequestRef.current;
+    setAddressDialogLocation(null);
+    setAddressDialogLocationError("");
+    setAddressDialogLocating(false);
+    if (!navigator.geolocation) {
+      setAddressDialogLocationError("GPS is not supported by this browser.");
+      return;
+    }
+    setAddressDialogLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        if (addressLocationRequestRef.current !== requestId) return;
+        setAddressDialogLocation({
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          accuracy: Math.round(coords.accuracy || 0),
+        });
+        setAddressDialogLocating(false);
+      },
+      (error) => {
+        if (addressLocationRequestRef.current !== requestId) return;
+        const message = error.code === 1
+          ? "Allow location permission in Chrome, then tap Detect again."
+          : error.code === 3
+          ? "GPS detection timed out. Move near a window and try again."
+          : "Current GPS location could not be detected. Please try again.";
+        setAddressDialogLocationError(message);
+        setAddressDialogLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!addressDialogOpen) return undefined;
+    detectDeliveryLocation();
+    return () => {
+      addressLocationRequestRef.current += 1;
+    };
+  }, [addressDialogOpen, detectDeliveryLocation]);
+
   const handleMealAction = async (slotKey, action, selectionType = "VEG", itemId = null, itemName = null) => {
     setSavingSelection(true);
     try {
@@ -615,6 +660,8 @@ export default function WorkerDashboard() {
         delivery_option: currentDeliveryOption,
         delivery_address: currentDeliveryAddress,
         delivery_notes: currentDeliveryNotes,
+        delivery_lat: slotData.delivery_lat ?? data?.worker?.delivery_lat ?? null,
+        delivery_lng: slotData.delivery_lng ?? data?.worker?.delivery_lng ?? null,
       };
       const res = await workerApi.post("/worker/select-meal", payload);
       if (action === "CANCEL") {
@@ -641,16 +688,20 @@ export default function WorkerDashboard() {
     }
   };
 
-  const handleOpenEditAddress = (slotKey, currentAddr, currentNotes) => {
+  const handleOpenEditAddress = (slotKey, currentAddr) => {
     setAddressDialogSlot(slotKey);
     setAddressDialogValue(currentAddr || data?.worker?.delivery_address || "");
-    setAddressDialogNotes(currentNotes || data?.worker?.delivery_notes || "");
     setAddressDialogOpen(true);
   };
 
   const handleSaveDeliveryAddress = async () => {
     if (!addressDialogValue.trim()) {
       toast.error("Please enter your hostel name & room number");
+      return;
+    }
+    if (!addressDialogLocation) {
+      toast.error("Detect your GPS location before confirming delivery");
+      detectDeliveryLocation();
       return;
     }
     setAddressDialogSaving(true);
@@ -665,7 +716,9 @@ export default function WorkerDashboard() {
         selected_item_name: slotData.selected_item_name || null,
         delivery_option: "DELIVERY",
         delivery_address: addressDialogValue.trim(),
-        delivery_notes: addressDialogNotes.trim(),
+        delivery_notes: slotData.delivery_notes || data?.worker?.delivery_notes || "",
+        delivery_lat: addressDialogLocation.latitude,
+        delivery_lng: addressDialogLocation.longitude,
       };
       await workerApi.post("/worker/select-meal", payload);
       toast.success(`Delivery address saved for ${addressDialogSlot.toUpperCase()}! 🛵`);
@@ -683,11 +736,10 @@ export default function WorkerDashboard() {
     const currentAddr = slotData.delivery_address || data?.worker?.delivery_address || "";
     const currentNotes = slotData.delivery_notes || data?.worker?.delivery_notes || "";
 
-    // If switching to delivery and no address exists, open modal to input address
-    if (newMode === "DELIVERY" && !currentAddr.trim()) {
+    // Every delivery selection refreshes the student's GPS so the dispatcher tracks the correct location.
+    if (newMode === "DELIVERY") {
       setAddressDialogSlot(slotKey);
-      setAddressDialogValue("");
-      setAddressDialogNotes(currentNotes);
+      setAddressDialogValue(currentAddr);
       setAddressDialogOpen(true);
       return;
     }
@@ -1980,16 +2032,16 @@ export default function WorkerDashboard() {
               <Bike className="h-6 w-6" />
             </div>
             <DialogTitle className="font-display text-lg font-bold text-slate-900">
-              Delivery Room & Instructions
+              Confirm Delivery Location
             </DialogTitle>
             <p className="text-xs text-slate-500">
-              Please enter your hostel name, floor, and room number for {addressDialogSlot.toUpperCase()} delivery.
+              Your GPS will be detected automatically. Fill only your hostel, floor, and room number.
             </p>
           </DialogHeader>
 
           <div className="space-y-4 pt-1">
             <div className="space-y-1.5">
-              <Label className="text-xs font-bold text-slate-700">Hostel & Room Number *</Label>
+              <Label className="text-xs font-bold text-slate-700">Hostel, Floor & Room Number *</Label>
               <Input
                 placeholder="e.g. Boys Hostel 2, Room 304, 3rd Floor"
                 value={addressDialogValue}
@@ -1998,14 +2050,24 @@ export default function WorkerDashboard() {
               />
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold text-slate-700">Delivery Instructions (Optional)</Label>
-              <Input
-                placeholder="e.g. Leave at door / Call on arrival"
-                value={addressDialogNotes}
-                onChange={(e) => setAddressDialogNotes(e.target.value)}
-                className="rounded-xl h-10 text-xs"
-              />
+            <div className={`rounded-xl border p-3 text-xs ${addressDialogLocation ? "border-emerald-200 bg-emerald-50 text-emerald-900" : addressDialogLocationError ? "border-rose-200 bg-rose-50 text-rose-900" : "border-teal-200 bg-teal-50 text-teal-900"}`}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  {addressDialogLocating ? <Loader2 className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
+                  <span className="font-bold">
+                    {addressDialogLocating
+                      ? "Detecting your current GPS…"
+                      : addressDialogLocation
+                      ? `GPS detected${addressDialogLocation.accuracy ? ` (±${addressDialogLocation.accuracy} m)` : ""}`
+                      : addressDialogLocationError || "Waiting for GPS permission…"}
+                  </span>
+                </div>
+                {!addressDialogLocating && (
+                  <button type="button" onClick={detectDeliveryLocation} className="shrink-0 font-extrabold underline underline-offset-2">
+                    Detect again
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-900">
@@ -2024,7 +2086,7 @@ export default function WorkerDashboard() {
             </Button>
             <Button
               type="button"
-              disabled={addressDialogSaving || !addressDialogValue.trim()}
+              disabled={addressDialogSaving || addressDialogLocating || !addressDialogValue.trim() || !addressDialogLocation}
               onClick={handleSaveDeliveryAddress}
               className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs shadow-xs"
             >

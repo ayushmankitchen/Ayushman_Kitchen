@@ -5603,6 +5603,8 @@ async def get_student_today_meal(
     default_delivery_pref = (worker.get("delivery_preference") or "DINE_IN").upper()
     default_delivery_addr = worker.get("delivery_address") or ""
     default_delivery_notes = worker.get("delivery_notes") or ""
+    default_delivery_lat = worker.get("delivery_lat")
+    default_delivery_lng = worker.get("delivery_lng")
 
     active_leave = await db.worker_leaves.find_one({
         "business_id": biz_id,
@@ -5637,10 +5639,18 @@ async def get_student_today_meal(
             slot_delivery_opt = (selection.get("delivery_option") or "DINE_IN").upper()
             slot_delivery_addr = selection.get("delivery_address") or default_delivery_addr
             slot_delivery_notes = selection.get("delivery_notes") or default_delivery_notes
+            slot_delivery_lat = selection.get("delivery_lat")
+            slot_delivery_lng = selection.get("delivery_lng")
+            if slot_delivery_lat is None:
+                slot_delivery_lat = default_delivery_lat
+            if slot_delivery_lng is None:
+                slot_delivery_lng = default_delivery_lng
         else:
             slot_delivery_opt = default_delivery_pref
             slot_delivery_addr = default_delivery_addr
             slot_delivery_notes = default_delivery_notes
+            slot_delivery_lat = default_delivery_lat
+            slot_delivery_lng = default_delivery_lng
 
         if not is_plan_included:
             effective_choice = "NOT_IN_PLAN"
@@ -5712,6 +5722,8 @@ async def get_student_today_meal(
             "delivery_option": slot_delivery_opt,
             "delivery_address": slot_delivery_addr,
             "delivery_notes": slot_delivery_notes,
+            "delivery_lat": slot_delivery_lat,
+            "delivery_lng": slot_delivery_lng,
             "is_cancelled": is_cancelled,
             "effective_choice": effective_choice,
             "selected_item_id": selected_item_id,
@@ -5730,6 +5742,8 @@ async def get_student_today_meal(
         "default_delivery_preference": default_delivery_pref,
         "delivery_address": default_delivery_addr,
         "delivery_notes": default_delivery_notes,
+        "delivery_lat": default_delivery_lat,
+        "delivery_lng": default_delivery_lng,
         "is_on_leave": bool(active_leave),
         "active_leave": active_leave,
         "subscription_stats": stats,
@@ -5795,6 +5809,17 @@ async def save_student_meal_selection(
         delivery_option = "DINE_IN"
     delivery_address = (body.get("delivery_address") if body.get("delivery_address") is not None else worker.get("delivery_address", "")).strip()
     delivery_notes = (body.get("delivery_notes") if body.get("delivery_notes") is not None else worker.get("delivery_notes", "")).strip()
+    delivery_lat = body.get("delivery_lat", worker.get("delivery_lat"))
+    delivery_lng = body.get("delivery_lng", worker.get("delivery_lng"))
+    if delivery_option == "DELIVERY" and action != "CANCEL":
+        if len(delivery_address) < 2:
+            raise HTTPException(status_code=422, detail="Enter your hostel, floor and room number for delivery")
+        if (isinstance(delivery_lat, bool) or isinstance(delivery_lng, bool)
+                or not isinstance(delivery_lat, (int, float)) or not isinstance(delivery_lng, (int, float))
+                or not -90 <= delivery_lat <= 90 or not -180 <= delivery_lng <= 180):
+            raise HTTPException(status_code=422, detail="Detect your current GPS location before selecting delivery")
+        delivery_lat = float(delivery_lat)
+        delivery_lng = float(delivery_lng)
 
     meal_plan_type = worker.get("meal_plan_type") or "BOTH"
     if meal_plan_type == "LUNCH_ONLY" and slot_key == "dinner":
@@ -5875,6 +5900,9 @@ async def save_student_meal_selection(
         "notes": notes,
         "updated_at": now_iso
     }
+    if delivery_option == "DELIVERY" and action != "CANCEL":
+        doc["delivery_lat"] = delivery_lat
+        doc["delivery_lng"] = delivery_lng
 
     await db.meal_selections.update_one(
         {"business_id": biz_id, "worker_id": wid, "date": target_date, "meal_slot": slot_key},
@@ -5882,11 +5910,12 @@ async def save_student_meal_selection(
         upsert=True
     )
 
-    # If delivery address is supplied and worker didn't have one saved, update default
-    if delivery_address and not worker.get("delivery_address"):
+    # Keep the latest room and GPS as the default and as the dispatcher's tracking destination.
+    if delivery_option == "DELIVERY" and action != "CANCEL":
         await db.workers.update_one(
             {"id": wid, "business_id": biz_id},
-            {"$set": {"delivery_address": delivery_address, "updated_at": now_iso}}
+            {"$set": {"delivery_address": delivery_address, "delivery_lat": delivery_lat,
+                      "delivery_lng": delivery_lng, "updated_at": now_iso}}
         )
 
     # Log Activity
