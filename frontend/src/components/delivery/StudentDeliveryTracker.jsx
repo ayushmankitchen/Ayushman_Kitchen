@@ -1,22 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bike, CheckCircle2, Clock, Loader2, MapPin, Navigation, Phone, RefreshCw } from "lucide-react";
+import { Bike, CheckCircle2, Clock, MapPin, Phone, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { workerApi, apiError } from "@/lib/api";
 import { startVisiblePolling } from "@/lib/polling";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import DeliveryMap from "./DeliveryMap";
+import SavedDeliveryLocation, { deliveryLocationDraft } from "./SavedDeliveryLocation";
 
 const STEPS = ["CONFIRMED", "PREPARING", "OUT_FOR_DELIVERY", "DELIVERED"];
 
-export default function StudentDeliveryTracker({ worker }) {
+export default function StudentDeliveryTracker({ worker, onLocationSaved }) {
   const [mealSlot, setMealSlot] = useState("lunch");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [locating, setLocating] = useState(false);
+  const [savingLocation, setSavingLocation] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const requestRef = useRef(0);
-  const [address, setAddress] = useState(worker?.delivery_address || "");
+  const [locationDraft, setLocationDraft] = useState(null);
 
   const load = useCallback(async () => {
     const request = ++requestRef.current;
@@ -24,13 +24,13 @@ export default function StudentDeliveryTracker({ worker }) {
       const response = await workerApi.get("/delivery/track/student", { params: { meal_slot: mealSlot } });
       if (request !== requestRef.current) return;
       setData(response.data);
-      if (response.data.delivery_address) setAddress(response.data.delivery_address);
+      setLocationDraft(current => current ?? deliveryLocationDraft(response.data.saved_location || worker));
     } catch (error) {
       if (request === requestRef.current) toast.error(apiError(error));
     } finally {
       if (request === requestRef.current) setLoading(false);
     }
-  }, [mealSlot]);
+  }, [mealSlot, worker]);
 
   useEffect(() => {
     setLoading(true);
@@ -55,21 +55,23 @@ export default function StudentDeliveryTracker({ worker }) {
     }
   };
 
-  const saveLocation = () => {
-    if (!address.trim()) return toast.error("Enter hostel and room number first");
-    if (!navigator.geolocation) return toast.error("This browser does not support GPS");
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
-      try {
-        await workerApi.post("/delivery/student/location", { latitude: coords.latitude, longitude: coords.longitude, address: address.trim() });
-        toast.success("Delivery location saved");
-        await load();
-      } catch (error) {
-        toast.error(apiError(error));
-      } finally {
-        setLocating(false);
-      }
-    }, (error) => { setLocating(false); toast.error(`GPS unavailable: ${error.message}`); }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 });
+  const saveLocation = async () => {
+    if (!locationDraft || !locationDraft.address.trim() || !Number.isFinite(locationDraft.latitude) || !Number.isFinite(locationDraft.longitude)) return;
+    setSavingLocation(true);
+    try {
+      await workerApi.post("/delivery/student/location", {
+        address: locationDraft.address.trim(), latitude: locationDraft.latitude,
+        longitude: locationDraft.longitude, replace_saved_location: locationDraft.replace_saved_location,
+      });
+      setLocationDraft(current => ({ ...current, saved: true, replace_saved_location: false }));
+      toast.success("Room / PG location saved for future deliveries");
+      await load();
+      await onLocationSaved?.();
+    } catch (error) {
+      toast.error(apiError(error));
+    } finally {
+      setSavingLocation(false);
+    }
   };
 
   const currentStep = Math.max(0, STEPS.indexOf(data?.delivery_status));
@@ -78,9 +80,12 @@ export default function StudentDeliveryTracker({ worker }) {
 
   return (
     <section className="space-y-5" data-testid="student-delivery-tracker">
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4"><div><span className="text-[10px] font-extrabold tracking-[.2em] text-teal-700">LIVE TRACKER</span><h1 className="font-display text-2xl font-extrabold text-slate-950">Meal Delivery</h1><p className="text-sm text-slate-500 mt-1">Track your rider and receive an arrival update.</p></div><div className="flex rounded-2xl bg-white border border-stone-200 p-1">{["lunch", "dinner"].map((slot) => <button key={slot} disabled={confirming || locating} onClick={() => { if (slot === mealSlot) return; requestRef.current += 1; setData(null); setLoading(true); setMealSlot(slot); }} className={`px-4 py-2 rounded-xl text-xs font-extrabold capitalize ${mealSlot === slot ? "bg-amber-400" : "text-slate-600"}`}>{slot === "lunch" ? "☀️" : "🌙"} {slot}</button>)}</div></div>
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4"><div><span className="text-[10px] font-extrabold tracking-[.2em] text-teal-700">LIVE TRACKER</span><h1 className="font-display text-2xl font-extrabold text-slate-950">Meal Delivery</h1><p className="text-sm text-slate-500 mt-1">Track your rider and receive an arrival update.</p></div><div className="flex rounded-2xl bg-white border border-stone-200 p-1">{["lunch", "dinner"].map((slot) => <button key={slot} disabled={confirming || savingLocation} onClick={() => { if (slot === mealSlot) return; requestRef.current += 1; setData(null); setLoading(true); setMealSlot(slot); }} className={`px-4 py-2 rounded-xl text-xs font-extrabold capitalize ${mealSlot === slot ? "bg-amber-400" : "text-slate-600"}`}>{slot === "lunch" ? "☀️" : "🌙"} {slot}</button>)}</div></div>
 
       {!loading && !data?.has_delivery_order && <div className="rounded-3xl bg-white border border-stone-200 p-7 text-center shadow-sm"><Bike className="h-10 w-10 text-amber-500 mx-auto" /><h2 className="font-display font-bold mt-3">No room delivery selected</h2><p className="text-sm text-slate-500 mt-1">Choose Delivery in today's meal selection before cutoff to enable live tracking.</p></div>}
+
+      {!loading && locationDraft && <div className="rounded-3xl bg-white border border-stone-200 p-5 shadow-sm space-y-3"><h3 className="font-display font-bold flex items-center gap-2"><MapPin className="h-4 w-4 text-rose-600" />Your delivery location</h3>{locationDraft && <SavedDeliveryLocation value={locationDraft} onChange={setLocationDraft} disabled={savingLocation} />}
+          {locationDraft && !locationDraft.saved && <Button onClick={saveLocation} disabled={savingLocation || !locationDraft.address.trim() || !Number.isFinite(locationDraft.latitude) || !Number.isFinite(locationDraft.longitude)} className="w-full rounded-xl bg-teal-900">{savingLocation ? "Saving…" : "Save delivery location"}</Button>}</div>}
 
       {data?.has_delivery_order && <>
         {data.can_confirm_receipt && <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 space-y-3">
@@ -94,7 +99,7 @@ export default function StudentDeliveryTracker({ worker }) {
 
         <DeliveryMap driver={driver} student={student} />
 
-        <div className="grid md:grid-cols-2 gap-4"><div className="rounded-3xl bg-white border border-stone-200 p-5 shadow-sm space-y-3"><h3 className="font-display font-bold flex items-center gap-2"><MapPin className="h-4 w-4 text-rose-600" />Your delivery location</h3><Input value={address} onChange={(event) => setAddress(event.target.value)} placeholder="Hostel, floor and room number" className="rounded-xl" /><Button onClick={saveLocation} disabled={locating} className="w-full rounded-xl bg-teal-900 hover:bg-teal-800">{locating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Navigation className="h-4 w-4 mr-2" />}Detect GPS & save</Button></div><div className="rounded-3xl bg-white border border-stone-200 p-5 shadow-sm"><h3 className="font-display font-bold flex items-center gap-2"><Bike className="h-4 w-4 text-teal-700" />Rider details</h3>{data.driver_name ? <div className="mt-3 space-y-2 text-sm"><p className="font-bold">{data.driver_name}</p>{data.driver_phone && <a href={`tel:${data.driver_phone}`} className="inline-flex items-center gap-2 text-teal-800 font-semibold"><Phone className="h-4 w-4" />{data.driver_phone}</a>}<p className="text-xs text-slate-500 flex items-center gap-1"><Clock className="h-3 w-3" />Location refreshes while the delivery run is active.</p></div> : <p className="text-sm text-slate-500 mt-3">Rider details appear when kitchen dispatches the meal.</p>}</div></div>
+        <div className="rounded-3xl bg-white border border-stone-200 p-5 shadow-sm"><h3 className="font-display font-bold flex items-center gap-2"><Bike className="h-4 w-4 text-teal-700" />Rider details</h3>{data.driver_name ? <div className="mt-3 space-y-2 text-sm"><p className="font-bold">{data.driver_name}</p>{data.driver_phone && <a href={`tel:${data.driver_phone}`} className="inline-flex items-center gap-2 text-teal-800 font-semibold"><Phone className="h-4 w-4" />{data.driver_phone}</a>}<p className="text-xs text-slate-500 flex items-center gap-1"><Clock className="h-3 w-3" />Location refreshes while the delivery run is active.</p></div> : <p className="text-sm text-slate-500 mt-3">Rider details appear when kitchen dispatches the meal.</p>}</div>
         <Button variant="outline" onClick={load} className="rounded-xl"><RefreshCw className="h-4 w-4 mr-2" />Refresh status</Button>
       </>}
     </section>

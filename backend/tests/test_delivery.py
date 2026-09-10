@@ -138,3 +138,49 @@ async def test_next_stop_changes_with_gps_and_either_party_can_complete(monkeypa
     finally:
         for collection in [server.db.meal_selections, server.db.delivery_sessions, server.db.delivery_notifications]:
             await collection.delete_many({"business_id": biz})
+
+
+@pytest.mark.asyncio
+async def test_saved_room_is_fixed_until_explicit_replacement(monkeypatch):
+    from unittest.mock import AsyncMock
+    biz = f"fixed-room-{uuid.uuid4().hex}"
+    worker = {"worker_id": biz, "business_id": biz}
+    today = server.get_today_date()
+    monkeypatch.setattr(server, "check_meal_slot_window", lambda *a, **kw: {"is_open": True})
+    monkeypatch.setattr(server, "deliver_student_push", AsyncMock())
+    try:
+        await server.db.workers.insert_one({"id": biz, "business_id": biz, "name": "Test",
+            "joining_date": today, "meal_plan_type": "BOTH", "total_quota": 60})
+        meal = {"date": today, "meal_slot": "lunch", "action": "CONFIRM", "delivery_option": "DELIVERY"}
+        await server.save_student_meal_selection({**meal, "delivery_address": "PG Room 204",
+            "delivery_lat": 28.6, "delivery_lng": 77.2}, worker)
+        # An older client sends the student's current outdoor GPS: keep the saved room.
+        await server.save_student_meal_selection({**meal, "meal_slot": "dinner",
+            "delivery_address": "Outside", "delivery_lat": 29, "delivery_lng": 78}, worker)
+        # Daily ordering also works without any GPS request or address input.
+        await server.save_student_meal_selection(meal, worker)
+        orders = await server.db.meal_selections.find({"business_id": biz}).to_list(10)
+        assert all(o["delivery_lat"] == 28.6 and o["delivery_address"] == "PG Room 204" for o in orders)
+        with pytest.raises(server.HTTPException) as denied:
+            await server.update_student_delivery_location(server.DeliveryLocationUpdate(
+                latitude=29, longitude=78, address="Outside"), worker)
+        assert denied.value.status_code == 409
+        # Replacement from the meal popup updates other pending deliveries as well.
+        await server.save_student_meal_selection({**meal, "delivery_address": "New PG",
+            "delivery_lat": 28.7, "delivery_lng": 77.3, "replace_saved_location": True}, worker)
+        dinner = await server.db.meal_selections.find_one({"business_id": biz, "meal_slot": "dinner"})
+        assert dinner["delivery_address"] == "New PG"
+        await server.db.meal_selections.update_one({"business_id": biz, "meal_slot": "lunch"}, {"$set": {"delivery_status": "DELIVERED"}})
+        await server.update_student_delivery_location(server.DeliveryLocationUpdate(
+            latitude=28.8, longitude=77.4, address="Final PG", replace_saved_location=True), worker)
+        dinner = await server.db.meal_selections.find_one({"business_id": biz, "meal_slot": "dinner"})
+        lunch = await server.db.meal_selections.find_one({"business_id": biz, "meal_slot": "lunch"})
+        assert dinner["delivery_address"] == "Final PG"
+        assert lunch["delivery_address"] == "New PG"  # Preserve completed delivery history.
+        profile = await server.db.workers.find_one({"id": biz})
+        tracked = await server.track_student_delivery("dinner", {**profile, **worker})
+        assert tracked["saved_location"]["delivery_address"] == "Final PG"
+        assert tracked["student_lat"] == 28.8
+    finally:
+        for collection in [server.db.workers, server.db.meal_selections, server.db.activity_logs]:
+            await collection.delete_many({"business_id": biz})

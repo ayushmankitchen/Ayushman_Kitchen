@@ -58,3 +58,19 @@ test("dispatcher advances after admin receipt, then student receipt via polling"
   await act(async () => poll());
   expect(container.textContent).toContain("All deliveries completed!");
 });
+
+test("saved room is available without an active meal and opening does not request GPS", async () => {
+  const getPosition = jest.fn();
+  Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition: getPosition } });
+  workerApi.get.mockResolvedValue({ data: { has_delivery_order: false, saved_location: {
+    delivery_address: "PG Room 204", delivery_lat: 28.6, delivery_lng: 77.2,
+  } } });
+  await act(async () => root.render(<StudentDeliveryTracker />));
+  expect(container.textContent).toContain("Saved delivery location");
+  expect(container.querySelector("input").value).toBe("PG Room 204");
+  expect(getPosition).not.toHaveBeenCalled();
+  await click("Remove / change location");
+  expect(workerApi.post).not.toHaveBeenCalled();
+  expect(getPosition).not.toHaveBeenCalled();
+  expect(container.textContent).toContain("Detect my location");
+});

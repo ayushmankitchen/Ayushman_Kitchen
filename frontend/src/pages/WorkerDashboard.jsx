@@ -19,6 +19,7 @@ import AudioPlayer from "@/components/chat/AudioPlayer";
 import SpeechTyping from "@/components/chat/SpeechTyping";
 import useSmartChatScroll from "@/components/chat/useSmartChatScroll";
 import StudentDeliveryTracker from "@/components/delivery/StudentDeliveryTracker";
+import SavedDeliveryLocation, { deliveryLocationDraft } from "@/components/delivery/SavedDeliveryLocation";
 import { clearConversationNotifications, enablePushNotifications, onPushNotification, pushSupported, sendTestNotification, updateAppBadge } from "@/lib/notifications";
 import {
   Loader2,
@@ -494,12 +495,8 @@ export default function WorkerDashboard() {
   // Room / Delivery Address Edit Dialog State
   const [addressDialogOpen, setAddressDialogOpen] = useState(false);
   const [addressDialogSlot, setAddressDialogSlot] = useState("lunch"); // "lunch" or "dinner"
-  const [addressDialogValue, setAddressDialogValue] = useState("");
+  const [addressDraft, setAddressDraft] = useState(() => deliveryLocationDraft());
   const [addressDialogSaving, setAddressDialogSaving] = useState(false);
-  const [addressDialogLocation, setAddressDialogLocation] = useState(null);
-  const [addressDialogLocating, setAddressDialogLocating] = useState(false);
-  const [addressDialogLocationError, setAddressDialogLocationError] = useState("");
-  const addressLocationRequestRef = useRef(0);
 
   // Meal Quotas / Stats State
   const [mealStats, setMealStats] = useState(null);
@@ -600,48 +597,6 @@ export default function WorkerDashboard() {
     }
   }, [tab, calMonth, loadMealCalendar]);
 
-  const detectDeliveryLocation = useCallback(() => {
-    const requestId = ++addressLocationRequestRef.current;
-    setAddressDialogLocation(null);
-    setAddressDialogLocationError("");
-    setAddressDialogLocating(false);
-    if (!navigator.geolocation) {
-      setAddressDialogLocationError("GPS is not supported by this browser.");
-      return;
-    }
-    setAddressDialogLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => {
-        if (addressLocationRequestRef.current !== requestId) return;
-        setAddressDialogLocation({
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-          accuracy: Math.round(coords.accuracy || 0),
-        });
-        setAddressDialogLocating(false);
-      },
-      (error) => {
-        if (addressLocationRequestRef.current !== requestId) return;
-        const message = error.code === 1
-          ? "Allow location permission in Chrome, then tap Detect again."
-          : error.code === 3
-          ? "GPS detection timed out. Move near a window and try again."
-          : "Current GPS location could not be detected. Please try again.";
-        setAddressDialogLocationError(message);
-        setAddressDialogLocating(false);
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
-    );
-  }, []);
-
-  useEffect(() => {
-    if (!addressDialogOpen) return undefined;
-    detectDeliveryLocation();
-    return () => {
-      addressLocationRequestRef.current += 1;
-    };
-  }, [addressDialogOpen, detectDeliveryLocation]);
-
   const handleMealAction = async (slotKey, action, selectionType = "VEG", itemId = null, itemName = null) => {
     setSavingSelection(true);
     try {
@@ -690,18 +645,18 @@ export default function WorkerDashboard() {
 
   const handleOpenEditAddress = (slotKey, currentAddr) => {
     setAddressDialogSlot(slotKey);
-    setAddressDialogValue(currentAddr || data?.worker?.delivery_address || "");
+    setAddressDraft(deliveryLocationDraft({ ...data?.worker,
+      delivery_address: data?.worker?.delivery_address || currentAddr || "" }));
     setAddressDialogOpen(true);
   };
 
   const handleSaveDeliveryAddress = async () => {
-    if (!addressDialogValue.trim()) {
+    if (!addressDraft.address.trim()) {
       toast.error("Please enter your hostel name & room number");
       return;
     }
-    if (!addressDialogLocation) {
+    if (!Number.isFinite(addressDraft.latitude) || !Number.isFinite(addressDraft.longitude)) {
       toast.error("Detect your GPS location before confirming delivery");
-      detectDeliveryLocation();
       return;
     }
     setAddressDialogSaving(true);
@@ -715,10 +670,11 @@ export default function WorkerDashboard() {
         selected_item_id: slotData.selected_item_id || null,
         selected_item_name: slotData.selected_item_name || null,
         delivery_option: "DELIVERY",
-        delivery_address: addressDialogValue.trim(),
+        delivery_address: addressDraft.address.trim(),
         delivery_notes: slotData.delivery_notes || data?.worker?.delivery_notes || "",
-        delivery_lat: addressDialogLocation.latitude,
-        delivery_lng: addressDialogLocation.longitude,
+        delivery_lat: addressDraft.latitude,
+        delivery_lng: addressDraft.longitude,
+        replace_saved_location: addressDraft.replace_saved_location,
       };
       await workerApi.post("/worker/select-meal", payload);
       toast.success(`Delivery address saved for ${addressDialogSlot.toUpperCase()}! 🛵`);
@@ -736,11 +692,9 @@ export default function WorkerDashboard() {
     const currentAddr = slotData.delivery_address || data?.worker?.delivery_address || "";
     const currentNotes = slotData.delivery_notes || data?.worker?.delivery_notes || "";
 
-    // Every delivery selection refreshes the student's GPS so the dispatcher tracks the correct location.
-    if (newMode === "DELIVERY") {
-      setAddressDialogSlot(slotKey);
-      setAddressDialogValue(currentAddr);
-      setAddressDialogOpen(true);
+    // Reuse the saved room location daily; request GPS only when setting up a new destination.
+    if (newMode === "DELIVERY" && !deliveryLocationDraft(data?.worker).saved) {
+      handleOpenEditAddress(slotKey, currentAddr);
       return;
     }
 
@@ -1560,7 +1514,7 @@ export default function WorkerDashboard() {
             {/* ──────────────────────────────────────────────────────────
                 2. ATTENDANCE & MEAL CONSUMPTION CALENDAR TAB
             ────────────────────────────────────────────────────────── */}
-            {tab === "delivery" && <StudentDeliveryTracker worker={data?.worker} />}
+            {tab === "delivery" && <StudentDeliveryTracker worker={data?.worker} onLocationSaved={loadData} />}
 
             {tab === "attendance" && (
               <div className="space-y-6">
@@ -2035,45 +1989,11 @@ export default function WorkerDashboard() {
               Confirm Delivery Location
             </DialogTitle>
             <p className="text-xs text-slate-500">
-              Your GPS will be detected automatically. Fill only your hostel, floor, and room number.
+              Save your room or PG once. Your delivery address stays the same until you choose to change it.
             </p>
           </DialogHeader>
 
-          <div className="space-y-4 pt-1">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold text-slate-700">Hostel, Floor & Room Number *</Label>
-              <Input
-                placeholder="e.g. Boys Hostel 2, Room 304, 3rd Floor"
-                value={addressDialogValue}
-                onChange={(e) => setAddressDialogValue(e.target.value)}
-                className="rounded-xl h-10 text-xs font-medium"
-              />
-            </div>
-
-            <div className={`rounded-xl border p-3 text-xs ${addressDialogLocation ? "border-emerald-200 bg-emerald-50 text-emerald-900" : addressDialogLocationError ? "border-rose-200 bg-rose-50 text-rose-900" : "border-teal-200 bg-teal-50 text-teal-900"}`}>
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  {addressDialogLocating ? <Loader2 className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
-                  <span className="font-bold">
-                    {addressDialogLocating
-                      ? "Detecting your current GPS…"
-                      : addressDialogLocation
-                      ? `GPS detected${addressDialogLocation.accuracy ? ` (±${addressDialogLocation.accuracy} m)` : ""}`
-                      : addressDialogLocationError || "Waiting for GPS permission…"}
-                  </span>
-                </div>
-                {!addressDialogLocating && (
-                  <button type="button" onClick={detectDeliveryLocation} className="shrink-0 font-extrabold underline underline-offset-2">
-                    Detect again
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-900">
-              💡 <strong>Tip:</strong> Kitchen staff will deliver your meal box right outside your room at standard delivery hours.
-            </div>
-          </div>
+          <SavedDeliveryLocation key={String(addressDialogOpen)} value={addressDraft} onChange={setAddressDraft} disabled={addressDialogSaving} />
 
           <DialogFooter className="p-0 flex flex-row gap-2 pt-2">
             <Button
@@ -2086,7 +2006,7 @@ export default function WorkerDashboard() {
             </Button>
             <Button
               type="button"
-              disabled={addressDialogSaving || addressDialogLocating || !addressDialogValue.trim() || !addressDialogLocation}
+              disabled={addressDialogSaving || !addressDraft.address.trim() || !Number.isFinite(addressDraft.latitude) || !Number.isFinite(addressDraft.longitude)}
               onClick={handleSaveDeliveryAddress}
               className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs shadow-xs"
             >

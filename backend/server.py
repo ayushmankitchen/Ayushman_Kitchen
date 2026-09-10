@@ -5811,6 +5811,13 @@ async def save_student_meal_selection(
     delivery_notes = (body.get("delivery_notes") if body.get("delivery_notes") is not None else worker.get("delivery_notes", "")).strip()
     delivery_lat = body.get("delivery_lat", worker.get("delivery_lat"))
     delivery_lng = body.get("delivery_lng", worker.get("delivery_lng"))
+    replace_location = body.get("replace_saved_location", False)
+    if not isinstance(replace_location, bool):
+        raise HTTPException(status_code=422, detail="Invalid replace_saved_location")
+    # Daily meal choices always reuse the fixed destination, including requests from older clients.
+    if worker.get("delivery_lat") is not None and worker.get("delivery_lng") is not None and not replace_location:
+        delivery_lat, delivery_lng = worker["delivery_lat"], worker["delivery_lng"]
+        delivery_address = worker.get("delivery_address") or delivery_address
     if delivery_option == "DELIVERY" and action != "CANCEL":
         if len(delivery_address) < 2:
             raise HTTPException(status_code=422, detail="Enter your hostel, floor and room number for delivery")
@@ -5918,6 +5925,15 @@ async def save_student_meal_selection(
                       "delivery_lng": delivery_lng, "updated_at": now_iso}}
         )
 
+        if replace_location:
+            await db.meal_selections.update_many(
+                {"business_id": biz_id, "worker_id": wid, "date": {"$gte": get_today_date()},
+                 "delivery_option": "DELIVERY", "action": {"$ne": "CANCEL"},
+                 "delivery_status": {"$ne": "DELIVERED"}},
+                {"$set": {"delivery_address": delivery_address, "delivery_lat": delivery_lat,
+                          "delivery_lng": delivery_lng, "updated_at": now_iso}},
+            )
+
     # Log Activity
     sname = worker.get("name", "Student")
     mode_text = " (🛵 Delivery)" if delivery_option == "DELIVERY" else " (🧳 Pickup)" if delivery_option == "PICKUP" else " (🍽️ Dine-in)"
@@ -5954,6 +5970,7 @@ class DeliveryLocationUpdate(BaseModel):
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
     address: Optional[str] = Field(None, max_length=500)
+    replace_saved_location: bool = False
 
 
 class DeliverySessionStart(BaseModel):
@@ -6193,7 +6210,14 @@ async def complete_delivery(selection_id: str, business_id: str, confirmed_by: s
 
 @api_router.post("/delivery/student/location")
 async def update_student_delivery_location(body: DeliveryLocationUpdate, worker: dict = Depends(get_current_worker)):
-    address = (body.address or worker.get("delivery_address") or "").strip()
+    profile = await db.workers.find_one({"id": worker["worker_id"], "business_id": worker["business_id"]}, {"_id": 0})
+    if not profile:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+    address = (body.address or profile.get("delivery_address") or "").strip()
+    if profile.get("delivery_lat") is not None and profile.get("delivery_lng") is not None and not body.replace_saved_location:
+        if (body.latitude != profile["delivery_lat"] or body.longitude != profile["delivery_lng"]
+                or address != profile.get("delivery_address")):
+            raise HTTPException(status_code=409, detail="Remove / change the saved location before saving a new destination")
     if len(address) < 2:
         raise HTTPException(status_code=422, detail="Enter a delivery address before saving location")
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -6201,8 +6225,8 @@ async def update_student_delivery_location(body: DeliveryLocationUpdate, worker:
               "delivery_address": address, "updated_at": now_iso}
     await db.workers.update_one({"id": worker["worker_id"], "business_id": worker["business_id"]}, {"$set": fields})
     await db.meal_selections.update_many(
-        {"worker_id": worker["worker_id"], "business_id": worker["business_id"], "date": get_today_date(),
-         "delivery_option": "DELIVERY", "action": {"$ne": "CANCEL"}},
+        {"worker_id": worker["worker_id"], "business_id": worker["business_id"], "date": {"$gte": get_today_date()},
+         "delivery_option": "DELIVERY", "action": {"$ne": "CANCEL"}, "delivery_status": {"$ne": "DELIVERED"}},
         {"$set": fields},
     )
     return {"ok": True, "latitude": body.latitude, "longitude": body.longitude, "address": address}
@@ -6235,6 +6259,8 @@ async def track_student_delivery(meal_slot: str = "lunch", worker: dict = Depend
     distance = delivery_distance_meters(driver_lat, driver_lng, student_lat, student_lng)
     return {
         "date": today, "meal_slot": slot, "has_delivery_order": is_delivery,
+        "saved_location": {"delivery_address": worker.get("delivery_address") or "",
+                           "delivery_lat": worker.get("delivery_lat"), "delivery_lng": worker.get("delivery_lng")},
         "selection_id": (selection or {}).get("id") if is_delivery else None,
         "can_confirm_receipt": bool(is_delivery and (selection or {}).get("delivery_status") == "OUT_FOR_DELIVERY"),
         "delivery_status": (selection or {}).get("delivery_status", "NOT_SELECTED" if not selection else "CONFIRMED"),
