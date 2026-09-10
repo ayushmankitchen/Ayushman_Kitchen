@@ -6040,8 +6040,10 @@ async def delivery_session_payload(business_id: str, meal_slot: str) -> dict:
             "eta_minutes": delivery_eta_minutes(distance),
         })
     stops.sort(key=lambda stop: (stop["delivery_status"] == "DELIVERED", stop["distance_meters"] is None,
-                                 stop["distance_meters"] or 0))
+                                 stop["distance_meters"] or 0, stop["selection_id"] or ""))
     delivered = sum(stop["delivery_status"] == "DELIVERED" for stop in stops)
+    next_stop = next((stop for stop in stops if stop["delivery_status"] != "DELIVERED"
+                      and stop["distance_meters"] is not None), None)
     return {
         "session_id": (session or {}).get("id"),
         "date": today,
@@ -6056,6 +6058,7 @@ async def delivery_session_payload(business_id: str, meal_slot: str) -> dict:
         "total_stops": len(stops),
         "pending_stops": len(stops) - delivered,
         "delivered_stops": delivered,
+        "next_stop": next_stop if (session or {}).get("is_active") else None,
         "stops": stops,
     }
 
@@ -6145,24 +6148,45 @@ async def update_delivery_location(body: DeliveryLocationUpdate, meal_slot: str 
 
 @api_router.post("/delivery/admin/orders/{selection_id}/deliver")
 async def mark_delivery_complete(selection_id: str, admin: dict = Depends(get_current_admin)):
+    return await complete_delivery(selection_id, admin["business_id"], "admin", admin["id"])
+
+
+@api_router.post("/delivery/student/orders/{selection_id}/receive")
+async def confirm_student_delivery(selection_id: str, worker: dict = Depends(get_current_worker)):
+    return await complete_delivery(selection_id, worker["business_id"], "student", worker["worker_id"])
+
+
+async def complete_delivery(selection_id: str, business_id: str, confirmed_by: str, actor_id: str):
+    query = {"id": selection_id, "business_id": business_id, "date": get_today_date(),
+             "delivery_option": "DELIVERY", "action": {"$ne": "CANCEL"}}
+    if confirmed_by == "student":
+        query["worker_id"] = actor_id
     now = datetime.now(timezone.utc)
+    # Only one admin/student request can claim completion; retries preserve the original receipt.
     selection = await db.meal_selections.find_one_and_update(
-        {"id": selection_id, "business_id": admin["business_id"], "delivery_option": "DELIVERY", "action": {"$ne": "CANCEL"}},
-        {"$set": {"delivery_status": "DELIVERED", "delivered_at": now.isoformat(), "updated_at": now.isoformat()}},
+        {**query, "delivery_status": "OUT_FOR_DELIVERY"},
+        {"$set": {"delivery_status": "DELIVERED", "delivered_at": now.isoformat(),
+                  "updated_at": now.isoformat(), "delivery_confirmed_by": confirmed_by,
+                  "delivery_confirmed_by_id": actor_id}},
         return_document=True,
     )
     if not selection:
-        raise HTTPException(status_code=404, detail="Delivery order not found")
+        existing = await db.meal_selections.find_one(query, {"_id": 0})
+        if not existing:
+            raise HTTPException(status_code=404, detail="Delivery order not found")
+        if existing.get("delivery_status") == "DELIVERED":
+            return {"ok": True, "delivered_at": existing.get("delivered_at"), "already_delivered": True}
+        raise HTTPException(status_code=409, detail="This meal has not been dispatched yet")
     notification = {
-        "id": str(uuid.uuid4()), "business_id": admin["business_id"], "worker_id": selection["worker_id"],
+        "id": str(uuid.uuid4()), "business_id": business_id, "worker_id": selection["worker_id"],
         "title": "🎉 Meal delivered", "body": f"Your {selection['meal_slot']} meal has arrived. Enjoy!",
         "type": "DELIVERED", "is_read": False, "created_at": now.isoformat(),
         "expires_at": now + NOTIFICATION_RETENTION,
     }
     await db.delivery_notifications.insert_one(notification)
     asyncio.create_task(deliver_student_push(
-        business_id=admin["business_id"], worker_id=selection["worker_id"], title=notification["title"],
-        body=notification["body"], url="/worker?tab=delivery", tag=f"delivered-{selection_id}",
+        business_id=business_id, worker_id=selection["worker_id"], title=notification["title"],
+        body=notification["body"], url="/student?tab=delivery", tag=f"delivered-{selection_id}",
     ))
     return {"ok": True, "delivered_at": notification["created_at"]}
 
@@ -6211,6 +6235,8 @@ async def track_student_delivery(meal_slot: str = "lunch", worker: dict = Depend
     distance = delivery_distance_meters(driver_lat, driver_lng, student_lat, student_lng)
     return {
         "date": today, "meal_slot": slot, "has_delivery_order": is_delivery,
+        "selection_id": (selection or {}).get("id") if is_delivery else None,
+        "can_confirm_receipt": bool(is_delivery and (selection or {}).get("delivery_status") == "OUT_FOR_DELIVERY"),
         "delivery_status": (selection or {}).get("delivery_status", "NOT_SELECTED" if not selection else "CONFIRMED"),
         "option_name": (selection or {}).get("selected_item_name") or (selection or {}).get("selection_type") or "Meal",
         "delivery_address": (selection or {}).get("delivery_address") or worker.get("delivery_address") or "",
@@ -6218,7 +6244,8 @@ async def track_student_delivery(meal_slot: str = "lunch", worker: dict = Depend
         "driver_lat": driver_lat, "driver_lng": driver_lng,
         "driver_name": (session or {}).get("driver_name") if driver_lat is not None else None,
         "driver_phone": (session or {}).get("driver_phone") if driver_lat is not None else None,
-        "is_out_for_delivery": bool((session or {}).get("is_active") and is_delivery),
+        "is_out_for_delivery": bool((session or {}).get("is_active") and is_delivery
+                                    and (selection or {}).get("delivery_status") == "OUT_FOR_DELIVERY"),
         "distance_meters": distance, "eta_minutes": delivery_eta_minutes(distance),
         "delivered_at": (selection or {}).get("delivered_at"),
         "updated_at": (session or {}).get("updated_at"),
